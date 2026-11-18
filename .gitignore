@@ -1,0 +1,10 @@
+# Build output
+target/
+# Data that the spikes write when they run
+spikes/*/profiles/
+spikes/*/data/
+# Nix build output
+result
+result-*
+# OS noise
+.DS_Store

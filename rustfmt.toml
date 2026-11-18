@@ -1,0 +1,2 @@
+# Lines can have 120 characters. Run `cargo fmt` before each commit.
+max_width = 120

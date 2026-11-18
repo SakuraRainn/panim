@@ -1,0 +1,58 @@
+# PANIM workspace.
+# spikes/ contains tests that we delete after the check. They are not members, so their dependencies stay out of this workspace.
+[workspace]
+resolver = "3"
+members = [
+  "crates/panim-core",
+  "crates/panim-vault",
+  "crates/panim-github",
+  "crates/panim-telegram",
+  "crates/app/src-tauri",
+]
+exclude = ["spikes"]
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+
+[profile.release]
+strip = "symbols"
+lto = "thin"
+# A release build checks integer overflow. An overflow stops the program and does not wrap into an incorrect number.
+overflow-checks = true
+
+# The key derivations are very slow without optimization. Optimize them in test builds too.
+[profile.dev.package.argon2]
+opt-level = 3
+[profile.dev.package.scrypt]
+opt-level = 3
+[profile.dev.package.pbkdf2]
+opt-level = 3
+[profile.dev.package.sha2]
+opt-level = 3
+[profile.dev.package.bip39]
+opt-level = 3
+[profile.dev.package.salsa20]
+opt-level = 3
+
+# The cipher of the sealed files is also very slow without optimization. A browser profile has many megabytes.
+[profile.dev.package.chacha20]
+opt-level = 3
+[profile.dev.package.poly1305]
+opt-level = 3
+[profile.dev.package.chacha20poly1305]
+opt-level = 3
+[profile.dev.package.universal-hash]
+opt-level = 3
+[profile.dev.package.cipher]
+opt-level = 3
+[profile.dev.package.aead]
+opt-level = 3
+[profile.dev.package.tar]
+opt-level = 3
+[profile.dev.package.panim-vault]
+opt-level = 3
+# An optimized crate with incremental compilation can keep an old object file. Then the linker finds
+# "undefined hidden symbol" errors after a merge. Thus, this crate compiles from the start, as one unit.
+incremental = false
+codegen-units = 1

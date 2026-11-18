@@ -1,0 +1,29 @@
+[package]
+name = "panim"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[build-dependencies]
+tauri-build = { version = "2.7.4", features = [] }
+
+[dependencies]
+panim-core = { path = "../../panim-core" }
+panim-github = { path = "../../panim-github" }
+panim-telegram = { path = "../../panim-telegram" }
+panim-vault = { path = "../../panim-vault" }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+tauri = { version = "2.12.5", features = [] }
+tauri-plugin-dialog = "2.8.4"
+url = "2.5.8"
+
+[dev-dependencies]
+# The fake HTTP client. A test of the connector uses no network.
+panim-github = { path = "../../panim-github", features = ["fake"] }
+# The fake TDLib. A test of the connector uses no network and no Telegram account.
+panim-telegram = { path = "../../panim-telegram", features = ["fake"] }
+tempfile = "3.27.0"
+# The mock runtime. A test examines the capabilities without a window.
+tauri = { version = "2.12.5", features = ["test"] }

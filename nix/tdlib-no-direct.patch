@@ -1,0 +1,93 @@
+PANIM: TDLib makes no connection that does not use the proxy.
+
+This patch is for TDLib 1.8.68 (commit c15d3f5a5de6e3ba5839822c451152e5e18bb700). `flake.nix` applies it.
+`docs/ARCHITECTURE.md` §4b and `spikes/tdlib/README.md` give the reasons and the proof.
+
+Without the patch, TDLib goes past the proxy of the persona in these cases:
+
+- The state is "Connecting" for 5 seconds. Then the "config recovery" asks Google DNS, Mozilla DNS, Azure and
+  Firebase for new addresses of Telegram, with direct HTTPS requests. It can then connect directly to a Telegram
+  address to get the full configuration.
+- The proxy has a host name. Then TDLib asks Google DNS and the resolver of the system for its address.
+
+The patch has four changes:
+
+1. `td/telegram/ConfigManager.cpp`, `ConfigRecoverer::loop`: the loop returns immediately. Thus, TDLib starts no
+   config recovery: no simple configuration request and no full configuration request.
+2. `td/telegram/net/ConnectionCreator.cpp`, `request_raw_connection_by_ip`: the function gives an error. It makes a
+   connection to an address without the proxy. Only the config recovery calls it. This change is a second
+   protection.
+3. `tdnet/td/net/Wget.cpp`, `Wget::try_init`: the function gives an error. `Wget` is the HTTP client of TDLib, and
+   it has no proxy support. The config recovery and the Google DNS resolver use it. Thus, TDLib makes no HTTP
+   request.
+4. `tdnet/td/net/GetHostByNameActor.cpp`, `NativeDnsResolver`: the resolver accepts only an IPv4 or IPv6 address.
+   It does not call `getaddrinfo` for a host name. Thus, a proxy with a host name gives an error and no lookup.
+
+The patch does not change these parts, because they run only when the app sends the request:
+
+- `pingProxy` with no proxy connects directly to Telegram.
+- `testProxy` connects to the proxy that the request gives, and it can look up its host name.
+
+PANIM sends none of these requests.
+
+Known limit: on a network that blocks the built-in addresses of Telegram, TDLib cannot find new addresses.
+
+diff -ru a/td/telegram/ConfigManager.cpp b/td/telegram/ConfigManager.cpp
+--- a/td/telegram/ConfigManager.cpp
++++ b/td/telegram/ConfigManager.cpp
+@@ -712,6 +712,10 @@
+     if (close_flag_) {
+       return;
+     }
++    // PANIM: no config recovery. It does not use the proxy.
++    if (true) {
++      return;
++    }
+     if (Session::is_high_loaded()) {
+       VLOG(config_recoverer) << "Skip config recoverer under high load";
+       set_timeout_in(Random::fast(200, 300));
+diff -ru a/td/telegram/net/ConnectionCreator.cpp b/td/telegram/net/ConnectionCreator.cpp
+--- a/td/telegram/net/ConnectionCreator.cpp
++++ b/td/telegram/net/ConnectionCreator.cpp
+@@ -601,6 +601,10 @@
+ 
+ void ConnectionCreator::request_raw_connection_by_ip(IPAddress ip_address, mtproto::TransportType transport_type,
+                                                      Promise<unique_ptr<mtproto::RawConnection>> promise) {
++  // PANIM: this connection does not use the proxy.
++  if (true) {
++    return promise.set_error(400, "Direct connections are off");
++  }
+   TRY_RESULT_PROMISE(promise, socket_fd, SocketFd::open(ip_address));
+ 
+   auto connection_promise = PromiseCreator::lambda([actor_id = actor_id(this), promise = std::move(promise),
+diff -ru a/tdnet/td/net/GetHostByNameActor.cpp b/tdnet/td/net/GetHostByNameActor.cpp
+--- a/tdnet/td/net/GetHostByNameActor.cpp
++++ b/tdnet/td/net/GetHostByNameActor.cpp
+@@ -113,7 +113,12 @@
+   void start_up() final {
+     IPAddress ip;
+     auto begin_time = Time::now();
+-    auto status = ip.init_host_port(host_, 0, prefer_ipv6_);
++    // PANIM: accept only an IP address. Do not ask the resolver of the system for a host name.
++    auto r_ip = IPAddress::get_ip_address(host_);
++    auto status = r_ip.is_ok() ? Status::OK() : Status::Error("Host names are off: give an IP address");
++    if (r_ip.is_ok()) {
++      ip = r_ip.move_as_ok();
++    }
+     auto end_time = Time::now();
+     VLOG(dns_resolver) << "Init host = " << host_ << " in " << end_time - begin_time << " seconds to " << ip;
+     if (status.is_error()) {
+diff -ru a/tdnet/td/net/Wget.cpp b/tdnet/td/net/Wget.cpp
+--- a/tdnet/td/net/Wget.cpp
++++ b/tdnet/td/net/Wget.cpp
+@@ -39,6 +39,10 @@
+ }
+ 
+ Status Wget::try_init() {
++  // PANIM: an HTTP request of TDLib does not use the proxy.
++  if (true) {
++    return Status::Error("Direct HTTP requests are off");
++  }
+   TRY_RESULT(url, parse_url(input_url_));
+   TRY_RESULT_ASSIGN(url.host_, idn_to_ascii(url.host_));
+ 

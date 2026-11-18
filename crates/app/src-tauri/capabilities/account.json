@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "account",
+  "description": "The windows of browser-view accounts. They load sites of other parties. They can call only page_notice, which has no arguments. They get no core permissions.",
+  "windows": ["account-*"],
+  "local": false,
+  "remote": {
+    "urls": ["https://*"]
+  },
+  "permissions": ["allow-page-notice"]
+}
