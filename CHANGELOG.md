@@ -2,6 +2,24 @@
 
 All the changes of PANIM that a user can see are in this file. The versions use semantic versioning.
 
+## 0.1.1 (2026-11-18)
+
+This release has no new feature. It changes the documents, the release steps and one error message of the AppImage.
+
+### Changes
+
+- **`README.md` is for the people who use PANIM.** It tells what PANIM does, how to check and install the download, the first start, the Telegram app values, the network route, the backup and the known limits.
+- **`CONTRIBUTING.md` is new.** It tells how to build and test PANIM, the rules for a change, and how a change comes into PANIM. It also has the release steps of the maintainer.
+- **`SECURITY.md` is new.** It tells how to report a vulnerability in private, and what PANIM protects.
+- **Chinese versions of the three documents:** `README.zh-CN.md`, `CONTRIBUTING.zh-CN.md` and `SECURITY.zh-CN.md`. The English files are the reference.
+- **Forms for the issues.** The public repository has a form for a problem report and a form for a question.
+- **The AppImage on Ubuntu 24.04 and later.** Ubuntu blocks the user namespaces that the AppImage needs. Before, the AppImage stopped with only "cannot unshare". Now it also tells the cause and what to do. On Ubuntu, it shows an AppArmor profile for its own path. `README.md` has the steps in the section "Ubuntu 24.04 and later".
+- **The public commit of a release.** The new script `nix run .#publish` makes it from the signed source archive. It examines the checksums, the signature, the email of the author, the files and the Telegram values. It does not push.
+
+### Known limits
+
+The known limits of 0.1.0 do not change. The AppImage still needs unprivileged user namespaces. On Ubuntu 24.04 and later, an AppArmor profile for the AppImage gives them (`README.md`).
+
 ## 0.1.0 (2026-11-17)
 
 The first release of PANIM, for Linux. PANIM is in step 1: one persona for one person. The user interface does not show the persona yet. `docs/DESIGN.md` tells what PANIM does.

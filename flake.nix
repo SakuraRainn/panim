@@ -3,7 +3,7 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    # The Rust version of `rust-toolchain.toml`. The package uses the same compiler as the builds with rustup.
+    # The Rust version of `rust-toolchain.toml`, for the package and the dev shell.
     rust-overlay = {
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -36,14 +36,18 @@
         '';
       });
       rustVersion = (lib.importTOML ./rust-toolchain.toml).toolchain.channel;
+      # The Rust toolchain of the package: only rustc, cargo and the standard library.
+      rustFor = pkgs: pkgs.rust-bin.stable.${rustVersion}.minimal;
+      # The Rust toolchain of the dev shell: the same version, also with Clippy and rustfmt.
+      rustDevFor = pkgs: (rustFor pkgs).override { extensions = [ "clippy" "rustfmt" ]; };
 
       # PANIM without the Telegram app values. A pure build cannot read the values, and the source never has them.
       panimFor = pkgs: pkgs.callPackage ./nix/package.nix {
-        rustToolchain = pkgs.rust-bin.stable.${rustVersion}.minimal;
+        rustToolchain = rustFor pkgs;
         tdlib-panim = tdlibFor pkgs;
       };
 
-      # PANIM with the Telegram app values of PANIM, for a release (`README.md`). Only an impure build can read the
+      # PANIM with the Telegram app values of PANIM, for a release (`CONTRIBUTING.md`). Only an impure build can read the
       # environment: `nix build --impure .#panim-release`. The values then are in the Nix store and in the binary.
       releaseFor = pkgs:
         let
@@ -60,15 +64,19 @@
             telegramApiHash = lib.toLower hash;
           };
 
-      # The AppRun of nix-appimage, with the patch `nix/appimage-apprun-store.patch`. Without the patch, the AppImage
-      # does not start on a system without `/nix/store`. The AppRun runs before the store of the image is visible, so
-      # it must be static, as the original.
+      # The AppRun of nix-appimage, with two patches. Without `nix/appimage-apprun-store.patch`, the AppImage does not
+      # start on a system without `/nix/store`. `nix/appimage-apprun-userns-help.patch` tells what to do when the
+      # system blocks user namespaces, for example Ubuntu 24.04 and later. The AppRun runs before the store of the
+      # image is visible, so it must be static, as the original.
       apprunFor = pkgs:
         let
           src = pkgs.applyPatches {
             name = "appimage-apprun-source";
             src = "${nix-appimage}/appruns/userns-chroot";
-            patches = [ ./nix/appimage-apprun-store.patch ];
+            patches = [
+              ./nix/appimage-apprun-store.patch
+              ./nix/appimage-apprun-userns-help.patch
+            ];
           };
         in
         pkgs.pkgsStatic.runCommandCC "AppRun-panim" { } ''
@@ -132,7 +140,7 @@
           program = lib.getExe self.packages.${system}.panim;
           meta.description = "Start PANIM";
         };
-        # `nix run .#release -- <arguments>` writes `SHA256SUMS` for the release files and signs it (`README.md`).
+        # `nix run .#release -- <arguments>` writes `SHA256SUMS` for the release files and signs it (`CONTRIBUTING.md`).
         release = {
           type = "app";
           program = lib.getExe (pkgs.writeShellApplication {
@@ -142,13 +150,24 @@
           });
           meta.description = "Write and sign the checksums of a release of PANIM";
         };
+        # `nix run .#publish -- <arguments>` makes the public commit and the tag of a release from its signed source
+        # archive, in a clone of the public repository. It does not push (`CONTRIBUTING.md`).
+        publish = {
+          type = "app";
+          program = lib.getExe (pkgs.writeShellApplication {
+            name = "panim-publish";
+            runtimeInputs = with pkgs; [ coreutils findutils gawk git gnugrep gnused gnutar gzip minisign ];
+            text = builtins.readFile ./nix/publish.sh;
+          });
+          meta.description = "Make the public commit of a release of PANIM from its signed source archive";
+        };
       });
 
-      # The libraries that the app and its web views need on Linux, and Node.js for the user interface.
-      # rustup supplies the Rust toolchain (rust-toolchain.toml).
+      # The libraries that the app and its web views need on Linux, Node.js for the user interface, and the Rust
+      # toolchain of `rust-toolchain.toml`. The Rust of the dev shell comes before a rustup of the system in `PATH`.
       devShells = forAll (system: pkgs: {
         default = pkgs.mkShell {
-          nativeBuildInputs = [ pkgs.pkg-config pkgs.nodejs_24 pkgs.pnpm pkgs.minisign ];
+          nativeBuildInputs = [ (rustDevFor pkgs) pkgs.pkg-config pkgs.nodejs_24 pkgs.pnpm pkgs.minisign ];
           buildInputs = with pkgs; [
             webkitgtk_4_1
             gtk3

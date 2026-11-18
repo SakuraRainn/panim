@@ -18,8 +18,10 @@ The work is on the branch `step-1`. The author of the commits is SakuraRainn.
 | 8 | Proton Mail through Bridge: mail in the timeline, mail out, IMAP IDLE. Check 3: IMAP/SMTP through the proxy | After release 0.1.0 (`DISCUSSION.md` §28) | A paid Proton account with Proton Mail Bridge |
 | 9 | The X API: the user adds their own developer key. PANIM shows the cost of each action | After release 0.1.0 (`DISCUSSION.md` §28) | An X developer key with credit |
 | 10 | Release 0.1.0 for Linux: the package (Nix, with `wrapGAppsHook`), the backup, `CHANGELOG.md`, the merge of `step-1` | Complete. Release 0.1.0 is public (2026-11-17, §6) | — |
+| 11 | The documents and the release steps: `README.md` for the users, `CONTRIBUTING.md`, `SECURITY.md`, issue templates, the script for the public commit, the AppImage message on Ubuntu | Not started. Release 0.1.1 (§7) | — |
+| 12 | macOS: the app, the browser profiles, TDLib and the package on macOS | Not started. Release 0.2.0 (§8). This is a large milestone | A Mac for the tests. An Apple Developer account for the signature of the app (optional) |
 
-Release 0.1.0 has GitHub and Telegram in the shared timeline, and X, Discord and Proton Mail in browser views. Milestones 8 and 9 come after release 0.1.0. After release 0.1.0, the next system is macOS (`DISCUSSION.md` §13).
+Release 0.1.0 has GitHub and Telegram in the shared timeline, and X, Discord and Proton Mail in browser views. Release 0.1.1 has milestone 11. Release 0.2.0 has milestone 12 (`DISCUSSION.md` §33, §34). Milestones 8 and 9 come later.
 
 ## 2. Milestone 4 in detail
 
@@ -177,14 +179,87 @@ The results of the hand checks on 2026-11-17:
 
 **Complete (2026-11-17).** The release steps:
 
-1. `step-1` got the tag `v0.1.0` (commit `e2943bd`). The private repository is now `SakuraRainn/panim-dev`. It has `step-1` and the tag.
+1. `step-1` got the tag `v0.1.0` (commit `2092b42`). The first publication used commit `e2943bd`. It was published again without `docs/DISCUSSION.md` and the spikes (`DISCUSSION.md` §32). The private repository is now `SakuraRainn/panim-dev`. It has `step-1` and the tag.
 2. The AppImage was built from the tag with the values of PANIM. The person signed `SHA256SUMS` with the key `7B5C5C4A551F160B`.
 3. The public repository `SakuraRainn/panim` has one commit on `main` and the tag `v0.1.0`. The commit is the same as the source archive of the release. It has no history of `panim-dev`.
 4. The release v0.1.0 of `SakuraRainn/panim` has the AppImage, the source archive, `SHA256SUMS` and `SHA256SUMS.minisig`.
 
-For the next release, make the public commit from the source archive of the release (`git archive` of the tag). `.gitattributes` leaves out `AGENTS.md`, `CLAUDE.md` and `.githooks`. Then add the commit on `main` of `SakuraRainn/panim`, with the private email of GitHub as the author.
+For the next release, make the public commit from the source archive of the release (`git archive` of the tag). `.gitattributes` leaves out `AGENTS.md`, `CLAUDE.md`, `.githooks` and `docs/DISCUSSION.md`. Then add the commit on `main` of `SakuraRainn/panim`, with the private email of GitHub as the author.
 
-## 7. Open tasks outside the milestones
+## 7. Release 0.1.1
+
+Release 0.1.1 has milestone 11 (`DISCUSSION.md` §34, §35). It has no new feature. It changes the documents, the release steps and one error message.
+
+### Milestone 11: the documents and the release steps
+
+Today, `README.md` has the steps of the maintainer next to the steps of the users. The public repository has no `AGENTS.md`, so a contributor has no rules.
+
+1. `README.md` is for the users:
+   - What PANIM does, and for whom. The accounts that PANIM supports, and how each one shows (timeline or browser view).
+   - The download, the check of the download, and the start of the AppImage. The installation with Nix.
+   - The first start: the passcode, the 12 recovery words and the key file.
+   - The Telegram app values, the network route and the backup, in short.
+   - The known limits, and where to ask for help (the issues of the public repository).
+   - No build steps and no release steps. A link to `CONTRIBUTING.md`.
+2. `CONTRIBUTING.md` is for the people who change PANIM:
+   - The build and the tests (`nix develop`, `pnpm`, `cargo`), and `PANIM_DATA` for a test vault.
+   - The rules from `AGENTS.md` that apply to all people: STE for the documents and the comments, each text of the user interface in English and Chinese, the rules of each platform (no scraping, no bot API for a user account), no change to a published file in `base/`.
+   - The layout of the repository.
+   - The Telegram app values for a build, and the rule that they never go into the repository.
+   - How to report a problem.
+   - How a change comes into PANIM. The public repository has only the releases, so it cannot merge a pull request. The maintainer applies the change in the development repository, with the name of the contributor (`Co-authored-by`). The change then comes with the next release.
+   - The release steps of the maintainer (now in `README.md`).
+3. `SECURITY.md`: how to report a vulnerability in private, not in a public issue. Use the private vulnerability reports of GitHub, if the person turns them on. Tell what PANIM protects (the vault, the sessions, the keys, the network route) and what it does not protect (`DESIGN.md`, the known limits).
+4. Issue templates for the public repository (`.github/ISSUE_TEMPLATE/`): a problem report (the version, the system, the AppImage or Nix, the steps, the result) and a question. A link to `SECURITY.md` for a vulnerability.
+5. `CONTRIBUTING.md`, `SECURITY.md` and `.github/` must be public. Do not mark them `export-ignore`. `README.md`, `CONTRIBUTING.md` and `SECURITY.md` also have a Chinese version (`README.zh-CN.md` and the others). The English file is the reference (`DISCUSSION.md` §38).
+6. The public commit in the release script. Today, the maintainer makes it by hand (§6). A new step of `nix/release.sh` (or a second script) does it:
+   - It takes the signed output folder and a clone of the public repository.
+   - It replaces the files of the clone with the files of the source archive. It makes one commit and the tag on `main`.
+   - The author is the private email of GitHub of the maintainer, which the script gets as an argument. It never uses the email of the development repository.
+   - It examines the commit before the push: the files that `export-ignore` removes are not there, and the Telegram values are not there.
+   - It does not push. It shows the push command.
+7. The AppImage on Ubuntu 24.04 and later. Ubuntu stops unprivileged user namespaces with AppArmor, so the `AppRun` stops with "cannot unshare".
+   - In the patch of the `AppRun`, when `unshare` fails, show a clear message: the cause, and a link to the section of `README.md`.
+   - In `README.md`, give the safe workaround (an AppArmor profile for the AppImage), and the alternatives (Nix, `--appimage-extract-and-run` does not help, because it also needs the namespaces; verify this).
+   - Test the message with a test that makes `unshare` fail, if possible.
+8. Automatic tests: a GitHub Actions workflow in `panim-dev` runs `pnpm check`, `cargo fmt`, `cargo clippy` and `cargo test` for each push to `step-1` and each pull request (`DISCUSSION.md` §36). All the tools come from Nix, also Rust (`DISCUSSION.md` §40).
+9. Version 0.1.1 and `CHANGELOG.md`.
+10. Hand checks: the person reads `README.md`, `CONTRIBUTING.md` and `SECURITY.md`. A person who does not know PANIM must be able to install it from `README.md` alone. The person turns on the private vulnerability reports in the settings of the public repository.
+11. The release: the tag, the AppImage, the signature and the public commit (with the new script), as for release 0.1.0 (§6).
+
+## 8. Release 0.2.0
+
+Release 0.2.0 has milestone 12. A new system is a new feature, so the version goes to 0.2.0 (`DISCUSSION.md` §34).
+
+### Milestone 12: macOS
+
+This is a large milestone. Tauri uses WKWebView on macOS, not WebKitGTK. Some parts of PANIM depend on Linux. Do the checks first, as for Linux (`ARCHITECTURE.md` §9).
+
+Checks before we build:
+
+1. **The browser profile.** Can each persona have its own data store in WKWebView, through Tauri and `wry`? Can PANIM put the data store in a folder that it seals, as on Linux? If WKWebView keeps the data in a folder of the system, the seal of the profile must change.
+2. **The proxy of a profile.** Does WKWebView send all the traffic of a profile through an HTTP or a SOCKS5 proxy (macOS 14 or later)? Does the DNS lookup stay in the proxy?
+3. **The memory area.** macOS has no `$XDG_RUNTIME_DIR` on `tmpfs`. Find a place where the open profiles and the TDLib folders stay in memory, or record the limit.
+4. **TDLib.** Build the TDLib of PANIM with its patch for macOS (`aarch64-darwin` and `x86_64-darwin`). Do the checks with `strace` again with the tools of macOS.
+5. **The unread counts.** Make sure that the title and the notification script operate in WKWebView.
+
+### A build without Nix
+
+Release 0.2.0 also gets a usual build, and the Nix package stays on top of it (`DISCUSSION.md` §40):
+
+1. Linux: the libraries of the system (for example the WebKitGTK packages of Ubuntu), `rustup` and `pnpm`. A script builds the TDLib of PANIM from the source with its patch.
+2. The packages from the bundler of Tauri (`.deb`, `.rpm`, AppImage on Linux; `.app` and `.dmg` on macOS), with the patched TDLib in them. Do the checks of the release 0.1.0 AppImage again (Fedora, the signature).
+3. The Nix package (`nix/package.nix`) stays. It uses the same TDLib patch.
+4. `CONTRIBUTING.md` gives the two ways to build.
+
+Then build:
+
+1. The app on macOS, with the same features as on Linux.
+2. The package: an `.app` and a `.dmg`, from Nix if possible. The checksums and the signature of the release, as on Linux.
+3. The signature and the notarization of Apple, if the person has an Apple Developer account. If not, record how a user starts an app that has no signature.
+4. The hand checks of milestones 3 to 7 and 10 on a Mac.
+
+## 9. Open tasks outside the milestones
 
 - Add the row of PANIM (project 1) to the family derivation table of ZIKARON (`crates/app/src/family.rs` in the ZIKARON repository). In step 3, ZIKARON must read the persona key at project 1, or take it from the key file (`DISCUSSION.md` §16).
 - Delete the old binary `target/release/partzufim`. The binary is now `target/release/panim`.
@@ -194,7 +269,7 @@ For the next release, make the public commit from the source archive of the rele
   - There is no check yet for passcode settings that are below the standard.
   - If the computer has swap, the kernel can write the profiles in `$XDG_RUNTIME_DIR` to the swap.
 
-## 8. How to start work in a new session
+## 10. How to start work in a new session
 
 1. Read `AGENTS.md`, then this document.
 2. Read `DESIGN.md` and `ARCHITECTURE.md` for the current agreement.

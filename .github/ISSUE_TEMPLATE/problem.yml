@@ -1,0 +1,63 @@
+name: Problem report
+description: PANIM does not operate as it must.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for the report. You can write in English or in Chinese (可以用中文填写). Before you send it:
+
+        - For a vulnerability, do not use this form. Read `SECURITY.md`.
+        - Do not write a passcode, recovery words, a key file, a token or Telegram values here.
+        - Look at the open issues. Maybe a different person reported the same problem.
+  - type: input
+    id: version
+    attributes:
+      label: Version of PANIM
+      description: The version of the release, for example 0.1.1. For a build from the source, the commit.
+      placeholder: "0.1.1"
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: System
+      description: The Linux distribution, its version and the processor, for example "Ubuntu 24.04, x86_64".
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: Installation
+      options:
+        - AppImage
+        - AppImage with --appimage-extract-and-run
+        - Nix (nix run or nix build)
+        - A different method (tell it below)
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps
+      description: The steps that show the problem. Start from the start of PANIM.
+      placeholder: |
+        1. Open Settings.
+        2. Click ...
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: Result
+      description: What occurred, and what you expected. Add the error messages and the output of the terminal, if there are some.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: more
+    attributes:
+      label: More information
+      description: For example, the account type (GitHub, Telegram, X, Discord, Proton Mail), the network route (direct, HTTP or SOCKS5) or a screenshot.
+    validations:
+      required: false

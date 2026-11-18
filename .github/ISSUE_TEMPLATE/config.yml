@@ -1,0 +1,6 @@
+# Only the forms of this folder can open an issue. Thus, each problem report has the version, the system and the steps.
+blank_issues_enabled: false
+contact_links:
+  - name: Report a vulnerability
+    url: https://github.com/SakuraRainn/panim/security/policy
+    about: Do not open a public issue for a vulnerability. Read SECURITY.md, and report it in private.

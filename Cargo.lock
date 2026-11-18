@@ -2586,7 +2586,7 @@ dependencies = [
 
 [[package]]
 name = "panim"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "panim-core",
  "panim-github",
@@ -2603,7 +2603,7 @@ dependencies = [
 
 [[package]]
 name = "panim-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bip39",
  "getrandom 0.4.3",
@@ -2617,7 +2617,7 @@ dependencies = [
 
 [[package]]
 name = "panim-github"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "panim-core",
  "serde",
@@ -2628,7 +2628,7 @@ dependencies = [
 
 [[package]]
 name = "panim-telegram"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "getrandom 0.4.3",
  "panim-core",
@@ -2639,7 +2639,7 @@ dependencies = [
 
 [[package]]
 name = "panim-vault"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aes",
  "argon2",

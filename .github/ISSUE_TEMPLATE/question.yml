@@ -1,0 +1,25 @@
+name: Question
+description: Ask how to use or build PANIM.
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Read `README.md` and `CONTRIBUTING.md` first. Maybe they have the answer.
+
+        You can write in English or in Chinese (可以用中文填写，请先阅读 `README.zh-CN.md`).
+
+        Do not write a passcode, recovery words, a key file, a token or Telegram values here.
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version of PANIM
+      description: If the question is about a release, give its version.
+    validations:
+      required: false

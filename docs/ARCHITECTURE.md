@@ -452,9 +452,9 @@ We prepare for a later step. The secrets, the local store and the network routes
 
 At that time, make sure that each call to the ZIKARON command line can name the identity that does the action.
 
-## 11. The package and the release (milestone 10)
+## 11. The package and the release (milestones 10 and 11)
 
-`DISCUSSION.md` §29 gives the decisions. `README.md` gives the steps for the person.
+`DISCUSSION.md` §29, §30, §31 and §35 give the decisions. `README.md` gives the steps for the users. `CONTRIBUTING.md` gives the release steps of the maintainer.
 
 - **The Nix package.** `flake.nix` gives `packages.<system>.panim` (also `default`) and `apps.<system>.default`. Thus, `nix build` and `nix run` operate. `nix/package.nix` has the derivation:
   - `fetchPnpmDeps` gets the packages of `crates/app/pnpm-lock.yaml` as a fixed-output derivation (`fetcherVersion` 5). When the lock file changes, the hash in `nix/package.nix` must change too.
@@ -465,6 +465,23 @@ At that time, make sure that each call to the ZIKARON command line can name the 
   - The binary links to `tdlib-panim`. The build script puts the folder of `libtdjson.so.1.8.68` into the run path.
   - The package also has a desktop file and two icons.
   - The tests do not run in the Nix build. They run in the dev shell (`AGENTS.md` §6).
+  - The dev shell has the same Rust toolchain as the package, and also Clippy and rustfmt. Thus, a build in the dev shell does not need rustup.
+- **The automatic tests.** `.github/workflows/ci.yml` runs on GitHub Actions for a push to `step-1`, a pull request against `step-1`, and a start by hand.
+  - The job `test` runs on `ubuntu-latest` in `nix develop`: `pnpm install --frozen-lockfile`, `pnpm build`, `pnpm check`, `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings` and `cargo test`.
+  - It sets `PANIM_TELEGRAM_ENV` to an empty value, and `PANIM_DATA` and `XDG_RUNTIME_DIR` to temporary folders. The tests need no window and no display.
+  - The dev shell supplies the Rust version of `rust-toolchain.toml` from `rust-overlay`, with Clippy and rustfmt. The job does not use the rustup of the runner.
+  - The reason: the Rust of the upstream rustup links with its own `rust-lld`, and not with the ld wrapper of Nix. Then a test binary has no run path to the Nix libraries, and it cannot start. The Rust of `rust-overlay` puts the ld wrapper of Nix around `rust-lld`.
+  - `Swatinem/rust-cache` runs `rustc` and `cargo` in the dev shell (`cmd-format`).
+  - The job also gets the pnpm packages of `nix/package.nix` again. Thus, a wrong `fetchPnpmDeps` hash makes the run fail.
+  - The job `package` does `nix build .#panim`. It runs only when a person starts the workflow by hand and selects `package`. Do this before a release.
+  - Each action has a full commit SHA, not a tag, because the owner of an action can move a tag.
+  - Two caches of GitHub Actions keep a run short. `nix-community/cache-nix-action` keeps the Nix store with the dev shell and `tdlib-panim`. `Swatinem/rust-cache` keeps the Cargo packages and `target/`. A pull request reads the caches of `step-1`.
+    - The job saves the Nix store immediately after it builds the dev shell. Thus, a failed test does not stop the save. Before the save, the garbage collector removes all paths that have no root. The dev shell and the flake inputs have a root.
+    - A run on `step-1` saves the Nix store if no cache has its key. A pull request also saves it if no cache has its key, for example when it changes `flake.lock`. Only this pull request can use that cache.
+    - Only a run on `step-1` saves the Rust cache. It also saves it after a failed test.
+  - The key of the Nix cache has the hash of `flake.nix`, `flake.lock` and the TDLib patch. A new key builds TDLib again only if TDLib changed.
+  - A private repository has 2,000 minutes each month (free plan). The first run builds TDLib and takes approximately 40 to 70 minutes. A run with the caches takes approximately 8 to 12 minutes.
+  - The workflow is not in the public repository (`.gitattributes`). The public repository gets only the snapshots of the releases.
 - **The Telegram app values.** The source never has them.
   - `packages.panim` has no values. A pure build cannot read the environment or `~/.config/panim/telegram.env`, and the derivation sets `PANIM_TELEGRAM_ENV` to an empty value. Then the app asks for the own values of the person.
   - `packages.panim-release` reads `PANIM_TELEGRAM_API_ID` and `PANIM_TELEGRAM_API_HASH` from the environment. This is possible only with `nix build --impure`. The flake examines the form of the values, and its errors do not show the values.
@@ -476,6 +493,12 @@ At that time, make sure that each call to the ZIKARON command line can name the 
     - On NixOS, the `AppRun` makes an overlay of the store of the image and the store of the system.
     - On a system without `/nix/store`, the overlay fails. Then the `AppRun` binds a folder of the image onto `/nix/store`. Without the patch, it bound `<appdir>/nix`, so each path became `/nix/store/store/<hash>-...`, and the start failed with "No such file or directory". The patch binds `<appdir>/nix/store`.
     - The rest of `main.c` does not need a `/nix` on the system. It does not copy the root entry `nix` of the system into the new root, and the new `/nix` comes from the image.
+    - The second patch `nix/appimage-apprun-userns-help.patch` (milestone 11) adds a message for a system that blocks unprivileged user namespaces, for example Ubuntu 24.04 and later with AppArmor. The patch file tells the details:
+      - The message shows when `unshare` fails, when a write to `uid_map`, `setgroups` or `gid_map` fails, and when the mount of the tmpfs fails with `EPERM` or `EACCES`. The first error line of the `AppRun` stays.
+      - If `/proc/sys/kernel/apparmor_restrict_unprivileged_userns` is 1, the message shows an AppArmor profile with `userns` for the path in `$APPIMAGE`. The runtime of the AppImage sets this variable. If the path has a quote or a pattern character, the message points only to `README.md`.
+      - If not, the message tells the person to ask the administrator. In each case, it names the Nix package and the section "Ubuntu 24.04 and later" of `README.md`.
+      - `--appimage-extract-and-run` does not help. The runtime extracts the image and starts the same `AppRun` (`src/runtime/runtime.c` of `appimage/type2-runtime`).
+      - The patch is separate from the store patch, so that PANIM can remove the store patch when `nix-appimage` fixes the bind.
     - `packages.appimage-apprun` is the patched `AppRun` alone, for a test.
   - On a system that is not NixOS (no `/run/opengl-driver`), the launcher tells libglvnd and Mesa to use the Mesa drivers in the image. The drivers of the system do not load with the libraries of Nix. It also sets `FONTCONFIG_FILE` to `/etc/fonts/fonts.conf` of the system, because the fontconfig of Nix knows only one font and no Chinese font.
 - **The checksums and the signature.** `nix run .#release -- --version X.Y.Z --ref REF --key KEY --out FOLDER [--artifact FILE]... [--pubkey PUB]` runs `nix/release.sh`:
@@ -484,8 +507,17 @@ At that time, make sure that each call to the ZIKARON command line can name the 
   3. It writes `SHA256SUMS` and signs it with minisign. The trusted comment has the version and the commit.
   4. It examines the checksums, and with `--pubkey` also the signature.
   - The secret key must be outside the repository (the person keeps it in `~/.minisign/panim.key`). The script never makes a key. `README.md` has the public key (key id `7B5C5C4A551F160B`).
+- **The public commit** (milestone 11, `DISCUSSION.md` §31, §35). The public repository `SakuraRainn/panim` has one commit for each release. `nix run .#publish -- --from FOLDER --clone CLONE --version X.Y.Z --name NAME --email EMAIL [--pubkey PUB] [--allow-any-email]` runs `nix/publish.sh`. It is a separate script from `release.sh`, because it has different inputs: the signed output folder and a clone of the public repository, not the development repository and the secret key.
+  1. It examines the line of `panim-<version>-source.tar.gz` in `SHA256SUMS`. With `--pubkey`, it also examines `SHA256SUMS.minisig` and the trusted comment "PANIM <version>, commit <commit>".
+  2. It refuses a clone that is not clean, that is not on `main`, that has the tag already, or that tracks a file that `export-ignore` removes. An empty clone gets the branch `main`.
+  3. It removes all the tracked files with `git rm`, copies the files of the archive into the clone, and adds them. Thus, a file that the release does not have goes out.
+  4. It makes one commit with the message "PANIM <version>" and a sentence that the commit is the same as the signed archive. The given name and email are the author, the committer and the tagger. Then it makes the annotated tag `v<version>`.
+  5. It examines the result. The mode and the blob of each file in the tree of the tag must be the same as in the archive (`git hash-object --no-filters`). The `export-ignore` paths must not be there. The script knows the paths of today and also reads `.gitattributes` of the current repository. If `PANIM_TELEGRAM_API_HASH` is set, `git grep -q` must not find it. The author, the committer and the tagger must be the given identity.
+  6. If a check fails, it removes the commit and the tag, and the clone is as before. It never pushes. It shows the push command.
+  - The email must have the form `<name>@users.noreply.github.com`, so that the email of the development repository does not become public. `--allow-any-email` stops this check.
+  - The script uses `git` with settings that do not depend on the configuration of the person: no filters, no hooks and no signature.
 - Known limits:
-  - The AppImage needs unprivileged user namespaces. Some systems turn them off, for example Ubuntu 24.04 and later with its AppArmor rule. It also needs FUSE, or the option `--appimage-extract-and-run`.
+  - The AppImage needs unprivileged user namespaces. Some systems turn them off, for example Ubuntu 24.04 and later with its AppArmor rule. Then the `AppRun` tells what to do (the second patch above). On Ubuntu, an AppArmor profile with `userns` for the path of the AppImage gives the namespaces to the AppImage only (`README.md`). Nobody tested this profile on Ubuntu yet. The AppImage also needs FUSE 3, or the option `--appimage-extract-and-run`.
   - The AppImage has the Mesa drivers of nixpkgs. They do not support the proprietary NVIDIA driver. Then WebKitGTK can need `WEBKIT_DISABLE_DMABUF_RENDERER=1` or `LIBGL_ALWAYS_SOFTWARE=1`.
   - The AppImage does not supply the locales of glibc. GTK then uses the C locale for the format of dates and numbers. The texts of PANIM do not change.
   - Fixed: the first AppImage did not start on Fedora, because the `AppRun` bound the wrong folder (the patch above). A test with `bwrap --tmpfs /nix` on NixOS shows the fix. The new AppImage waits for a new test by the person on a system that is not NixOS (`ROADMAP.md` §6).
