@@ -59,9 +59,15 @@ This document tells how we build PANIM. It shows the current agreement. `DESIGN.
 - A browser window uses the profile folder of the persona, the route of the persona and a current Safari user agent.
 - The app seals the open browser profile every five minutes. When the main window closes, or when the person locks the app, the app closes the browser windows and seals the profile.
 - The settings that the gate needs (the language and the time for the automatic lock) are in `settings.json` in the data folder. They are not secret.
+- The automatic lock counts the input in all the windows:
+  - Key, pointer and wheel events in the main window reset the time of the lock (`Main.svelte`).
+  - On Linux, the Rust side connects to the GTK signal `event` of the WebKit view of each account window and each profile window. GTK sends each event to this signal before WebKit gets it.
+  - The Rust side counts only key presses, button presses and scroll events. It does not stop the event, so the page gets it.
+  - The Rust side sends the event `input-elsewhere` to the main window, no more than one time in 10 seconds (`activity.rs`, without Tauri). This event also resets the time of the lock.
+  - The script of a page cannot make a GTK event. Thus, a page cannot stop the automatic lock.
+  - On macOS, the events come from a different source. Milestone 12 must add this part. Until then, only the input in the main window counts on macOS.
 - The text of the user interface is in `crates/app/src/lib/i18n.svelte.ts`, in English and Chinese. `pnpm check` fails if a text is missing in one language.
 - Known limits:
-  - The automatic lock counts only input in the main window. Input in a browser window does not stop the lock.
   - libsoup can write a warning about the HSTS table of the profile. The pages load correctly.
   - The app needs the GSettings schemas. Without them, the app stops when a file dialog opens. The Nix package supplies them with `wrapGAppsHook3` (§11).
 
@@ -90,10 +96,20 @@ In step 1, these parts are code of PANIM or usual crates (§10):
 - `panim-core` has the data model, the persona key and the proofs. It does not write to the disk.
 - `panim-vault` has the sealed local data:
   - The cipher is XChaCha20-Poly1305. The passcode key comes from Argon2id (64 MiB, three passes). The file keys come from HKDF-SHA256.
+  - The header `vault.json` keeps the settings of Argon2id. `Vault::open` gets the settings of the app (`DISCUSSION.md` §44):
+    - If one or more settings in the header are below the settings of the app, PANIM seals the master key again after the passcode opens it. The new seal has a new salt and the larger value of each setting. The passcode does not change.
+    - PANIM writes the new header while it has the lock of the one writer. If this write fails, the open still succeeds. The old header stays complete, and the next open tries again.
+    - A change to the header cannot make the seal weaker, because the old seal does not open with different settings. Thus, this step is for old vaults and test vaults.
+    - The maximum is 4 GiB of memory, 64 passes and 16 lanes (`KdfParams::MAX`). Settings above it give `VaultError::Damaged` before Argon2id runs, and do not count as a wrong try. Thus, a changed header cannot use all the memory of the computer.
+    - The persona key does not use these settings. Thus, the recovery opens a vault with a damaged header, and sets the settings of the app.
   - The store writes the personas and the accounts to one sealed file, and the items of each account to a different sealed file.
   - The store writes the kept proofs to the sealed place `store/proofs` (§6a).
   - The store writes its files with `postcard`. This form has no field names, so a new field in a stored struct makes the old files unreadable. Put new data in a new place, and give the new file a version number.
+  - A failed write does not change the data in memory. Each change of the store or the secrets keeps a copy of the part that it changes: the meta, the items of one account, the proofs or the secret table. If the write fails, the change puts the copy back and gives `Error::Storage`.
+  - `Vault::write` writes a temporary file and then renames it. Thus, each file on the disk is complete.
+  - The removal of an account writes the meta first. If a later step fails, an items file or a proof without its account stays on the disk. The store ignores this data when it opens.
   - The key file of the persona key is a V3 keystore (Web3 Secret Storage). Other wallets can read it.
+  - The import of a key file refuses scrypt settings above n = 2^20, r = 16 or p = 16, and pbkdf2 settings above c = 10,000,000, before the KDF starts. It compares the MAC in constant time.
   - A passcode must have eight characters or more.
   - The app keeps the Telegram app values of the person in the sealed place `app/telegram` (§4b). The file is JSON with a version number. A vault from before milestone 10 has no such file, and PANIM then uses its own values.
 
@@ -108,7 +124,7 @@ In step 1, these parts are code of PANIM or usual crates (§10):
 - **No new cipher.** All the files in `data/` are sealed with keys from the master key, and the header holds only sealed copies of the master key. Thus, the archive needs no new cipher. Only the passcode, the 12 recovery words or the key file open it.
 - **What the archive does not keep.**
   - `vault.lock` is the lock of one process on one computer.
-  - `gate.json` is the count of wrong passcode tries. A restored vault starts with no wrong tries. This count is not a protection against a copy of the files, because Argon2id is that protection.
+  - `gate.json` is the count of wrong passcode tries. A restored vault starts with no wrong tries. This count is not a protection against a copy of the files, because Argon2id is that protection. The count includes only the passcodes that a person types in PANIM. A person who can change the files can remove `gate.json`.
   - `settings.json` has the language and the time of the automatic lock. These are not secret, and the first start sets the language again.
   - A temporary file of an interrupted write (`data/.<name>.<random>.tmp`).
 - **The steps of a backup** (the command `backup_vault`, only from the main window):
@@ -138,6 +154,9 @@ In step 1, these parts are code of PANIM or usual crates (§10):
 | Telegram | MTProto through TDLib | Phone number, code and the optional two-step password | One timeline item for each chat (§4b). PANIM has its own `api_id`, and the person can give their own values. TDLib does its own network connections, so PANIM sets its proxy for each client. |
 | Email | IMAP/SMTP | Address and password | For Proton Mail, PANIM connects to Proton Mail Bridge at 127.0.0.1. Later, it connects directly to other services. |
 | X | API v2 on HTTPS | OAuth 2.0 with PKCE | Optional. PANIM uses it only when the user adds their own developer key. X bills each request to that key. The browser view operates without the key. |
+| Bluesky (release 0.3.0) | AT Protocol (XRPC on HTTPS) | To be decided in milestone 13: OAuth of the AT Protocol, or an app password | The crate `panim-bluesky`. A proof uses version 2 of the proof format (`base/panim-proof-v2.md`). |
+
+In release 0.3.0, the email connector also connects directly to usual services with a password or an app password (`DISCUSSION.md` §42).
 
 Each connector polls the platform or listens to it. It writes timeline items to the local store. It sends posts and answers as its account.
 
@@ -361,7 +380,7 @@ Each connector polls the platform or listens to it. It writes timeline items to 
 - **To examine a proof**, PANIM does two checks:
   1. The signature. PANIM compares the signature of the statement with the address of the persona. The form is fixed and public, so any person can do this check without PANIM.
   2. The source of the post. If the connector has an API for it, PANIM gets the post through the API (a GitHub gist, or X with the key of the user). If not, the person looks at the post in a browser view and pastes the statement into PANIM. PANIM does not read the page.
-- **The exact text form** is in `base/panim-proof-v1.md`. Other tools can use it to make and examine proofs without PANIM. The value that the key signs is SHA-256 of the statement, as ZIKARON uses SHA-256 for `presig`.
+- **The exact text form** is in `base/panim-proof-v1.md`. Version 2 (`base/panim-proof-v2.md`, release 0.3.0) adds Bluesky, with a DID as the id. Other tools can use it to make and examine proofs without PANIM. The value that the key signs is SHA-256 of the statement, as ZIKARON uses SHA-256 for `presig`.
 
 ## 6a. The proof screens (milestone 6)
 
@@ -466,7 +485,7 @@ At that time, make sure that each call to the ZIKARON command line can name the 
   - The package also has a desktop file and two icons.
   - The tests do not run in the Nix build. They run in the dev shell (`AGENTS.md` §6).
   - The dev shell has the same Rust toolchain as the package, and also Clippy and rustfmt. Thus, a build in the dev shell does not need rustup.
-- **The automatic tests.** `.github/workflows/ci.yml` runs on GitHub Actions for a push to `step-1`, a pull request against `step-1`, and a start by hand.
+- **The automatic tests.** `.github/workflows/ci.yml` runs on GitHub Actions for a push to `main`, a pull request against `main`, and a start by hand.
   - The job `test` runs on `ubuntu-latest` in `nix develop`: `pnpm install --frozen-lockfile`, `pnpm build`, `pnpm check`, `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings` and `cargo test`.
   - It sets `PANIM_TELEGRAM_ENV` to an empty value, and `PANIM_DATA` and `XDG_RUNTIME_DIR` to temporary folders. The tests need no window and no display.
   - The dev shell supplies the Rust version of `rust-toolchain.toml` from `rust-overlay`, with Clippy and rustfmt. The job does not use the rustup of the runner.
@@ -475,10 +494,10 @@ At that time, make sure that each call to the ZIKARON command line can name the 
   - The job also gets the pnpm packages of `nix/package.nix` again. Thus, a wrong `fetchPnpmDeps` hash makes the run fail.
   - The job `package` does `nix build .#panim`. It runs only when a person starts the workflow by hand and selects `package`. Do this before a release.
   - Each action has a full commit SHA, not a tag, because the owner of an action can move a tag.
-  - Two caches of GitHub Actions keep a run short. `nix-community/cache-nix-action` keeps the Nix store with the dev shell and `tdlib-panim`. `Swatinem/rust-cache` keeps the Cargo packages and `target/`. A pull request reads the caches of `step-1`.
+  - Two caches of GitHub Actions keep a run short. `nix-community/cache-nix-action` keeps the Nix store with the dev shell and `tdlib-panim`. `Swatinem/rust-cache` keeps the Cargo packages and `target/`. A pull request reads the caches of `main`.
     - The job saves the Nix store immediately after it builds the dev shell. Thus, a failed test does not stop the save. Before the save, the garbage collector removes all paths that have no root. The dev shell and the flake inputs have a root.
-    - A run on `step-1` saves the Nix store if no cache has its key. A pull request also saves it if no cache has its key, for example when it changes `flake.lock`. Only this pull request can use that cache.
-    - Only a run on `step-1` saves the Rust cache. It also saves it after a failed test.
+    - A run on `main` saves the Nix store if no cache has its key. A pull request also saves it if no cache has its key, for example when it changes `flake.lock`. Only this pull request can use that cache.
+    - Only a run on `main` saves the Rust cache. It also saves it after a failed test.
   - The key of the Nix cache has the hash of `flake.nix`, `flake.lock` and the TDLib patch. A new key builds TDLib again only if TDLib changed.
   - A private repository has 2,000 minutes each month (free plan). The first run builds TDLib and takes approximately 40 to 70 minutes. A run with the caches takes approximately 8 to 12 minutes.
   - The workflow is not in the public repository (`.gitattributes`). The public repository gets only the snapshots of the releases.

@@ -146,7 +146,6 @@ The Telegram library of PANIM has a change, so that Telegram makes no connection
 
 - PANIM runs only on Linux. A version for macOS comes in a later release.
 - All the browser views have the same fingerprint as your computer. The profile and the route of PANIM stop only easy links between personas.
-- The automatic lock counts only the input in the main window.
 - If your computer has swap, the system can write the open browser profile to the swap. Use encrypted swap or no swap.
 - The unread count of a browser view exists only while its window is open.
 - The Telegram chat panel shows text only. On a network that blocks the addresses of Telegram, use a proxy.

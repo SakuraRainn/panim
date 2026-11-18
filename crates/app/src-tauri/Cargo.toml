@@ -1,6 +1,6 @@
 [package]
 name = "panim"
-version = "0.1.1"
+version = "0.1.2"
 edition.workspace = true
 license.workspace = true
 publish = false
@@ -18,6 +18,11 @@ serde_json = "1.0.154"
 tauri = { version = "2.12.5", features = [] }
 tauri-plugin-dialog = "2.8.4"
 url = "2.5.8"
+
+# The input of the browser windows for the automatic lock (`docs/ARCHITECTURE.md` §2). This is the version of Tauri
+# and wry.
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18.2"
 
 [dev-dependencies]
 # The fake HTTP client. A test of the connector uses no network.

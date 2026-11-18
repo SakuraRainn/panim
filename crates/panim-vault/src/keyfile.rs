@@ -26,6 +26,15 @@ pub struct ScryptParams {
     pub p: u32,
 }
 
+/// The largest scrypt `log_n` that import accepts: n = 2^20.
+const MAX_SCRYPT_LOG_N: u32 = 20;
+/// The largest scrypt `r` that import accepts.
+const MAX_SCRYPT_R: u32 = 16;
+/// The largest scrypt `p` that import accepts.
+const MAX_SCRYPT_P: u32 = 16;
+/// The largest pbkdf2 `c` (the number of rounds) that import accepts.
+const MAX_PBKDF2_C: u32 = 10_000_000;
+
 impl ScryptParams {
     /// The usual settings of wallets: n = 2^18, r = 8, p = 1. This uses 256 MiB of memory.
     pub const STANDARD: ScryptParams = ScryptParams { log_n: 18, r: 8, p: 1 };
@@ -117,12 +126,20 @@ pub fn import(text: &str, password: &str) -> Result<PersonaKey, VaultError> {
     let mut derived = Zeroizing::new([0u8; 32]);
     match file.crypto.kdf.as_str() {
         "scrypt" => {
+            // Examine the settings before scrypt runs. A bad file can ask for too much memory or time.
             let n = number("n")?;
             if !n.is_power_of_two() || n < 2 {
                 return Err(bad("scrypt n is not a power of two"));
             }
-            let scrypt_params = scrypt::Params::new(n.trailing_zeros() as u8, number("r")? as u32, number("p")? as u32)
-                .map_err(|_| bad("the scrypt settings are not correct"))?;
+            let log_n = n.trailing_zeros();
+            let r = u32::try_from(number("r")?).map_err(|_| bad("scrypt r is too large"))?;
+            let p = u32::try_from(number("p")?).map_err(|_| bad("scrypt p is too large"))?;
+            if log_n > MAX_SCRYPT_LOG_N || r > MAX_SCRYPT_R || p > MAX_SCRYPT_P {
+                return Err(bad("the scrypt settings are above the limits"));
+            }
+            let log_n = u8::try_from(log_n).map_err(|_| bad("scrypt n is too large"))?;
+            let scrypt_params =
+                scrypt::Params::new(log_n, r, p).map_err(|_| bad("the scrypt settings are not correct"))?;
             scrypt::scrypt(password.as_bytes(), &salt, &scrypt_params, derived.as_mut())
                 .map_err(|_| bad("scrypt failed"))?;
         }
@@ -131,6 +148,9 @@ pub fn import(text: &str, password: &str) -> Result<PersonaKey, VaultError> {
                 return Err(bad("only pbkdf2 with hmac-sha256 is supported"));
             }
             let rounds = u32::try_from(number("c")?).map_err(|_| bad("pbkdf2 c is too large"))?;
+            if rounds > MAX_PBKDF2_C {
+                return Err(bad("pbkdf2 c is above the limit"));
+            }
             pbkdf2::pbkdf2_hmac::<sha2::Sha256>(password.as_bytes(), &salt, rounds, derived.as_mut());
         }
         _ => return Err(bad("the kdf is not scrypt or pbkdf2")),
@@ -138,7 +158,7 @@ pub fn import(text: &str, password: &str) -> Result<PersonaKey, VaultError> {
 
     let ciphertext = unhex(&file.crypto.ciphertext).ok_or_else(|| bad("the ciphertext is not hexadecimal"))?;
     let expected = unhex(&file.crypto.mac).ok_or_else(|| bad("the mac is not hexadecimal"))?;
-    if mac(&derived, &ciphertext).as_slice() != expected.as_slice() {
+    if !equal_in_constant_time(&mac(&derived, &ciphertext), &expected) {
         return Err(VaultError::WrongKeyFilePassword);
     }
     let iv: [u8; 16] = unhex(&file.crypto.cipherparams.iv)
@@ -158,6 +178,17 @@ fn mac(derived: &[u8; 32], ciphertext: &[u8]) -> [u8; 32] {
     hasher.update(&derived[16..]);
     hasher.update(ciphertext);
     hasher.finalize().into()
+}
+
+/// Compares two byte strings. The time does not change with the position of the first different byte.
+///
+/// The length is not secret, so a different length gives `false` immediately.
+fn equal_in_constant_time(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let difference = a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y));
+    std::hint::black_box(difference) == 0
 }
 
 fn uuid_v4() -> Result<String, VaultError> {
@@ -210,6 +241,70 @@ mod tests {
             hex(&out),
             "fdbabe1c9d3472007856e7190d01e9fe7c6ad7cbc8237830e77376634b3731622eaf30d92e22a3886ff109279d9830dac727afb94a83ee6d8360cbdfa2cc0640"
         );
+    }
+
+    /// Replaces one kdf setting in a key file. The value is JSON text.
+    fn with_setting(text: &str, name: &str, value: &str) -> String {
+        let mut file: serde_json::Value = serde_json::from_str(text).unwrap();
+        file["crypto"]["kdfparams"][name] = serde_json::from_str(value).unwrap();
+        file.to_string()
+    }
+
+    fn assert_refused_quickly(text: &str) {
+        let start = std::time::Instant::now();
+        assert!(matches!(import(text, "testpassword"), Err(VaultError::BadKeyFile(_))));
+        assert!(start.elapsed() < std::time::Duration::from_millis(500));
+    }
+
+    #[test]
+    fn settings_above_the_limits_are_refused() {
+        assert_refused_quickly(&with_setting(SCRYPT_VECTOR, "n", "2097152")); // 2^21
+        assert_refused_quickly(&with_setting(SCRYPT_VECTOR, "n", "9223372036854775808")); // 2^63
+        assert_refused_quickly(&with_setting(SCRYPT_VECTOR, "r", "17"));
+        assert_refused_quickly(&with_setting(SCRYPT_VECTOR, "p", "17"));
+        assert_refused_quickly(&with_setting(PBKDF2_VECTOR, "c", "10000001"));
+    }
+
+    #[test]
+    fn values_above_u32_are_refused() {
+        // Before this repair, `as u32` changed 2^32 + 1 to 1.
+        assert_refused_quickly(&with_setting(SCRYPT_VECTOR, "r", "4294967297"));
+        assert_refused_quickly(&with_setting(SCRYPT_VECTOR, "p", "4294967297"));
+        assert_refused_quickly(&with_setting(PBKDF2_VECTOR, "c", "4294967297"));
+    }
+
+    #[test]
+    fn the_standard_settings_are_in_the_limits() {
+        let standard = ScryptParams::STANDARD;
+        assert!(u32::from(standard.log_n) <= MAX_SCRYPT_LOG_N);
+        assert!(standard.r <= MAX_SCRYPT_R);
+        assert!(standard.p <= MAX_SCRYPT_P);
+    }
+
+    #[test]
+    fn a_wrong_mac_is_refused() {
+        let key = PersonaKey::generate().unwrap();
+        let text = export(&key, "pw", ScryptParams::TEST).unwrap();
+        let mut file: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let mac = file["crypto"]["mac"].as_str().unwrap().to_string();
+        let first = if mac.starts_with('0') { "1" } else { "0" };
+        file["crypto"]["mac"] = format!("{first}{}", &mac[1..]).into();
+        assert_eq!(
+            import(&file.to_string(), "pw").unwrap_err(),
+            VaultError::WrongKeyFilePassword
+        );
+        file["crypto"]["mac"] = mac[..62].into();
+        assert_eq!(
+            import(&file.to_string(), "pw").unwrap_err(),
+            VaultError::WrongKeyFilePassword
+        );
+    }
+
+    #[test]
+    fn constant_time_compare() {
+        assert!(equal_in_constant_time(&[1, 2, 3], &[1, 2, 3]));
+        assert!(!equal_in_constant_time(&[1, 2, 3], &[1, 2, 4]));
+        assert!(!equal_in_constant_time(&[1, 2, 3], &[1, 2]));
     }
 
     #[test]

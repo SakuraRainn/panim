@@ -2,7 +2,7 @@
 
 This document shows the plan for step 1 and the current state of the work. Change it when a milestone starts or is complete. `DESIGN.md` tells what PANIM does. `ARCHITECTURE.md` tells how we build it. `DISCUSSION.md` is the record of the decisions.
 
-The work is on the branch `step-1`. The author of the commits is SakuraRainn.
+The work is on the branch `main`. Until 2026-11-18, its name was `step-1` (`DISCUSSION.md` §41). The author of the commits is SakuraRainn.
 
 ## 1. Milestones of step 1
 
@@ -15,13 +15,17 @@ The work is on the branch `step-1`. The author of the commits is SakuraRainn.
 | 5 | GitHub: the device login, notifications and the events of watched repositories in the timeline, answers, the check of a proof in a gist | Complete | — |
 | 6 | Proof screens: make a proof, show the text to post and its location, examine the proof of a different persona | Complete | — |
 | 7 | Telegram: chats in the timeline, messages, a proxy for each persona. Check 4: the Rust bindings of TDLib and how to package TDLib | Complete | — |
-| 8 | Proton Mail through Bridge: mail in the timeline, mail out, IMAP IDLE. Check 3: IMAP/SMTP through the proxy | After release 0.1.0 (`DISCUSSION.md` §28) | A paid Proton account with Proton Mail Bridge |
+| 8 | Proton Mail through Bridge, as one more service of the email connector (milestone 14) | After milestone 14 (`DISCUSSION.md` §28, §42) | A paid Proton account with Proton Mail Bridge |
 | 9 | The X API: the user adds their own developer key. PANIM shows the cost of each action | After release 0.1.0 (`DISCUSSION.md` §28) | An X developer key with credit |
 | 10 | Release 0.1.0 for Linux: the package (Nix, with `wrapGAppsHook`), the backup, `CHANGELOG.md`, the merge of `step-1` | Complete. Release 0.1.0 is public (2026-11-17, §6) | — |
-| 11 | The documents and the release steps: `README.md` for the users, `CONTRIBUTING.md`, `SECURITY.md`, issue templates, the script for the public commit, the AppImage message on Ubuntu | Not started. Release 0.1.1 (§7) | — |
-| 12 | macOS: the app, the browser profiles, TDLib and the package on macOS | Not started. Release 0.2.0 (§8). This is a large milestone | A Mac for the tests. An Apple Developer account for the signature of the app (optional) |
+| 11 | The documents and the release steps: `README.md` for the users, `CONTRIBUTING.md`, `SECURITY.md`, issue templates, the script for the public commit, the AppImage message on Ubuntu | Complete. Release 0.1.1 is public (2026-11-18, §7) | — |
+| 12 | macOS: the app, the browser profiles, TDLib and the package on macOS | Not started. Release 0.2.0 (§10). This is a large milestone | A Mac for the tests. An Apple Developer account for the signature of the app (optional) |
+| 13 | Bluesky: the timeline, the notifications, posts and answers, the direct messages. Proof format version 2 and the automatic check of a proof post | Not started. Release 0.3.0 (§11) | — |
+| 14 | Email services through IMAP/SMTP: mail in the timeline, mail out, IMAP IDLE. Check 3: IMAP/SMTP through the proxy | Not started. Release 0.3.0 (§11) | — |
+| 15 | Six repairs: the automatic lock in all the windows, stronger passcode settings, no change in memory after a failed write, limits for a key file, the unread GitHub notifications, the order of the timeline answers | The six repairs are complete. Release 0.1.2 (§8) waits for the hand checks | — |
+| 16 | The seal of the open folders: no freeze of the window, no seal when nothing changed, a correct copy of the SQLite files | Not started. Release 0.1.3 (§9) | — |
 
-Release 0.1.0 has GitHub and Telegram in the shared timeline, and X, Discord and Proton Mail in browser views. Release 0.1.1 has milestone 11. Release 0.2.0 has milestone 12 (`DISCUSSION.md` §33, §34). Milestones 8 and 9 come later.
+Release 0.1.0 has GitHub and Telegram in the shared timeline, and X, Discord and Proton Mail in browser views. Release 0.1.1 has milestone 11. Release 0.1.2 has milestone 15 (`DISCUSSION.md` §44, §45). Release 0.1.3 has milestone 16 (`DISCUSSION.md` §45). Release 0.2.0 has milestone 12 (`DISCUSSION.md` §33, §34). Release 0.3.0 has milestones 13 and 14 (`DISCUSSION.md` §42). Milestones 8 and 9 come later.
 
 ## 2. Milestone 4 in detail
 
@@ -227,7 +231,98 @@ Today, `README.md` has the steps of the maintainer next to the steps of the user
 10. Hand checks: the person reads `README.md`, `CONTRIBUTING.md` and `SECURITY.md`. A person who does not know PANIM must be able to install it from `README.md` alone. The person turns on the private vulnerability reports in the settings of the public repository.
 11. The release: the tag, the AppImage, the signature and the public commit (with the new script), as for release 0.1.0 (§6).
 
-## 8. Release 0.2.0
+**Complete (2026-11-18).** The person read the three documents and accepted them. The person turned on the private vulnerability reports. The automatic tests passed on the pull request and on `step-1`. The release steps:
+
+1. `step-1` got the tag `v0.1.1` (commit `3525cb5`). The tag is also in `SakuraRainn/panim-dev`.
+2. The AppImage was built from the tag with the values of PANIM. The person signed `SHA256SUMS` with the key `7B5C5C4A551F160B`.
+3. `nix run .#publish` made the public commit `a465b7f` on top of the commit of 0.1.0. The script examined the commit, and the coordinator pushed it with the tag `v0.1.1`.
+4. The release v0.1.1 of `SakuraRainn/panim` has the AppImage, the source archive, `SHA256SUMS` and `SHA256SUMS.minisig`.
+
+## 8. Release 0.1.2
+
+Release 0.1.2 has milestone 15 (`DISCUSSION.md` §44, §45). It has no new feature. It repairs three known limits of release 0.1.0 and three problems that a review of the code found. Thus, it is a patch release, and it comes before release 0.2.0.
+
+### Milestone 15: six repairs
+
+Each repair has its own subagent, worktree and branch (`AGENTS.md` §7). The repairs change different files, so the work can occur at the same time.
+
+The six repairs are complete (2026-11-18). The automatic tests passed on the merge of each group of three branches. Repairs 1 and 6 wait for their hand checks.
+
+1. **The automatic lock counts the input in all the windows.**
+   - Today, only the input in the main window resets the time of the automatic lock (`ARCHITECTURE.md` §2). A person who works in a browser window gets a lock, and the browser windows close.
+   - The Rust side gets the key, button and scroll events of each account window from GTK, before WebKit gets them.
+   - The script of the page does not send these events. Thus, a page cannot stop the automatic lock.
+   - The Rust side sends the event `input-elsewhere` to the main window, no more than one time in 10 seconds. The timer in `Main.svelte` resets on this event.
+   - Tests: the limit of one event in 10 seconds, without Tauri.
+   - Hand check: work in an X window for more time than the lock time. Make sure that PANIM does not lock. Then stop the input, and make sure that PANIM locks.
+   - On macOS, the events come from a different source. Milestone 12 must do this part again.
+2. **PANIM makes weak passcode settings stronger.**
+   - The header of the vault keeps the settings of Argon2id. Today, PANIM opens a vault with all settings, also with settings below `KdfParams::STANDARD`.
+   - `Vault::open` gets the settings of the app. When the passcode opens a vault with weaker settings, PANIM seals the master key again with the settings of the app. The passcode does not change.
+   - A change to the header cannot make the seal weaker, because the old seal does not open with different settings. Thus, the repair is for old or test vaults.
+   - PANIM refuses settings above a maximum (for example 4 GiB of memory or 64 passes). Thus, a changed header cannot use all the memory of the computer.
+   - Tests: a vault with weak settings opens and gets the settings of the app. The passcode still opens it. A header with too large settings gives `VaultError::Damaged`.
+3. **A failed write does not change the data in memory.**
+   - Today, `SealedStore` and `SealedSecrets` change the data in memory, then write it. If the write fails, the data in memory is different from the data on the disk.
+   - Each change keeps a copy of the part that it changes: the meta, the items of one account, the proofs or the table of the secrets. If the write fails, the change puts the copy back and gives `Error::Storage`.
+   - `Vault::write` writes a temporary file and then renames it. Thus, each file on the disk is complete.
+   - `remove_account` writes more than one file. It writes the meta first. An items file or a proof without its account stays on the disk, but `SealedStore::open` ignores it.
+   - Tests: a test hook in `Vault` makes the next write fail. After the failure, the data in memory is the same as before the change, and the store opens again with the same data.
+
+4. **A key file has limits for its settings.**
+   - `keyfile::import` reads the settings of scrypt (`n`, `r`, `p`) and of pbkdf2 (`c`) from the file. Today, they have no maximum, and `as u32` can cut a large value.
+   - Refuse a file above these limits: `log_n` 20, `r` 16, `p` 16, `c` 10 000 000. Use `u32::try_from`, not `as`. The error is the usual error of a bad key file.
+   - Compare the MAC in constant time.
+   - Tests: a file above each limit gives the error quickly. The test vectors of the key file still pass.
+5. **The unread GitHub notifications show.**
+   - The command `timeline` asks the store for 500 items. Then `Session::timeline` removes the GitHub events, because they have no read state.
+   - With the filter "unread", many events can fill the 500 places. Then older unread notifications do not show.
+   - Remove the items without a read state before the limit, not after it.
+   - `sync_state` still copies the unread items to count them. A count without a copy needs a new method of the store, so it waits (`DISCUSSION.md` §45).
+   - Tests: an account with more than 500 events and one older unread notification. The filter "unread" shows the notification.
+6. **An old answer does not replace a new timeline.**
+   - `load()` in `Main.svelte` runs on each change of the filter and on each event `timeline-changed`. It makes three calls, and nothing stops an older call.
+   - A slow older answer can replace a newer answer, for example after a change of the account filter.
+   - Give each call of `load()` a number. Ignore an answer that is not from the latest call.
+   - Hand check: change the account filter fast while an account syncs. The timeline shows the selected account.
+   - Known limit: each new call stops the older calls. During many Telegram updates, the timeline can stay the same until the updates stop. Repair 5 of milestone 16 sends fewer events.
+
+Then:
+
+1. Change `ARCHITECTURE.md`, the known limits in `README.md` and `README.zh-CN.md`, and §12 of this document. In `ARCHITECTURE.md`, tell that `gate.json` counts only the passcodes that a person types in PANIM. A person who can change the files can remove it.
+2. Version 0.1.2 and `CHANGELOG.md`.
+3. Hand checks: the lock check of repair 1 and the filter check of repair 6. A vault from release 0.1.1 opens with release 0.1.2, and the timeline, the accounts and the Telegram sessions are there.
+4. The release: the tag, the AppImage, the signature and the public commit, as for release 0.1.1 (§7).
+
+The results of the hand checks on 2026-11-18:
+
+- **Passed:** the lock check of repair 1, with an X window. The vault of release 0.1.1 opened, and the accounts, the timeline, a browser login and the Telegram sessions were there. It opened again after a restart.
+- **Not done:** the filter check of repair 6. The person could not make the problem occur. The commands `accounts`, `timeline` and `sync_state` are not async, so Tauri runs them on the main thread in their order. Thus, a newer call always gets the last answer, and the problem cannot occur today. Repair 1 of milestone 16 can make these commands async. Then the problem can occur, so milestone 16 does this hand check.
+- The automatic tests passed on `main` (2026-11-18).
+
+## 9. Release 0.1.3
+
+Release 0.1.3 has milestone 16 (`DISCUSSION.md` §45). It has no new feature. It changes how PANIM seals the open folders.
+
+### Milestone 16: the seal of the open folders
+
+1. **No freeze of the window.**
+   - Every five minutes, a thread locks the session and seals the browser profile and the TDLib folders. The window waits for the same lock, so it stops during the seal.
+   - Make the archive and write it outside the lock of the session. Make sure that two seals of one folder cannot occur at the same time, and that the lock of the vault waits for a seal.
+   - Argon2id and scrypt also run under the lock (unlock, recovery, a change of the passcode). Move them outside the lock, or make these commands async.
+2. **No seal when nothing changed.** Compare the paths, sizes and modification times with the last seal. If they are the same, do not seal.
+3. **A correct copy of the SQLite files.**
+   - WebKit and TDLib write SQLite files while the folder is open. The seal copies the file and its WAL file at different times, so the copy can be damaged.
+   - The seal at the lock and at the close is correct, because the windows close first. The problem is the periodic seal, which PANIM restores after a crash.
+   - Examine the files of WebKit and TDLib. Then select a solution, for example the backup interface of SQLite. Record the choice in `DISCUSSION.md`.
+   - Test: stop PANIM with an open window during a seal. Start it again. The logins are there.
+4. **Less memory.** Today, the seal keeps the archive and its sealed copy in memory together. Examine a stream into the cipher. This part is optional.
+5. **Fewer events from Telegram.**
+   - Each Telegram update writes the items file of the account three times, and it always sends `timeline-changed`. Then the main window makes three calls.
+   - Write the file one time for each update. Send the event only when the timeline changed.
+6. Version 0.1.3, `CHANGELOG.md`, the hand checks and the release, as for release 0.1.2. The hand checks include the filter check of milestone 15, repair 6 (§8).
+
+## 10. Release 0.2.0
 
 Release 0.2.0 has milestone 12. A new system is a new feature, so the version goes to 0.2.0 (`DISCUSSION.md` §34).
 
@@ -259,20 +354,51 @@ Then build:
 3. The signature and the notarization of Apple, if the person has an Apple Developer account. If not, record how a user starts an app that has no signature.
 4. The hand checks of milestones 3 to 7 and 10 on a Mac.
 
-## 9. Open tasks outside the milestones
+## 11. Release 0.3.0
+
+Release 0.3.0 comes after release 0.2.0. It adds two platforms (`DISCUSSION.md` §42). Do milestone 13 first, because it is smaller.
+
+### Milestone 13: Bluesky
+
+`DISCUSSION.md` §42 and §43 give the decisions.
+
+1. Proof format version 2 (`base/panim-proof-v2.md`):
+   - Add the domains `panim/2-proof` and `panim/2-revoke` and the platform `bluesky` to `panim-core`.
+   - Add the worked example of version 2 §6. Calculate it with the code, and keep it as a test vector.
+   - A checker of version 2 also examines version 1 blocks.
+2. The crate `panim-bluesky`. Its tests use a fake HTTP client and no network, as in `panim-github`.
+3. The sign-in. Examine the OAuth of the AT Protocol and the app passwords. Record the choice in `DISCUSSION.md`.
+4. The notifications and the posts of the followed accounts in the timeline. Answers and new posts.
+5. The direct messages (`chat.bsky.*`), if the sign-in gives access to them.
+6. The proof screens: show the block, and tell the person to post it and pin it. The check gets the post from its URL through the public API and compares the DIDs.
+7. Hand checks with a test account: the login, the timeline, an answer, a proof post and its check.
+
+### Milestone 14: Email services
+
+Before the work starts, decide on these two parts (`DISCUSSION.md` §45):
+
+- **The storage of the items.** Today, each change writes the full file of the items of an account. A mailbox can have thousands of items, so this does not scale. Select a new layout of the sealed store.
+- **The lock of the session.** One lock holds all of the session. Each connector adds more work under it.
+
+1. Check 3: IMAP and SMTP on TLS through an HTTP proxy, a SOCKS5 proxy and Tor. The DNS lookup must stay in the proxy.
+2. The email connector: the login with an address and a password or an app password, IMAP IDLE, mail in the timeline and mail out.
+3. The settings of the usual services (the host names and the ports). The person can also enter other values.
+4. Hand checks with a Fastmail or mailbox.org test account, and with a Gmail account and an app password.
+
+## 12. Open tasks outside the milestones
 
 - Add the row of PANIM (project 1) to the family derivation table of ZIKARON (`crates/app/src/family.rs` in the ZIKARON repository). In step 3, ZIKARON must read the persona key at project 1, or take it from the key file (`DISCUSSION.md` §16).
 - Delete the old binary `target/release/partzufim`. The binary is now `target/release/panim`.
 - Known limits from milestones 2 and 3 (`ARCHITECTURE.md` §2a, §9):
-  - The automatic lock counts only input in the main window.
-  - If a write to the disk fails, the data in memory can be different from the data on the disk until the store opens again.
-  - There is no check yet for passcode settings that are below the standard.
+  - The automatic lock counts only input in the main window. Release 0.1.2 repairs it (§8).
+  - If a write to the disk fails, the data in memory can be different from the data on the disk until the store opens again. Release 0.1.2 repairs it (§8).
+  - There is no check yet for passcode settings that are below the standard. Release 0.1.2 repairs it (§8).
   - If the computer has swap, the kernel can write the profiles in `$XDG_RUNTIME_DIR` to the swap.
 
-## 10. How to start work in a new session
+## 13. How to start work in a new session
 
 1. Read `AGENTS.md`, then this document.
 2. Read `DESIGN.md` and `ARCHITECTURE.md` for the current agreement.
 3. Read the end of `DISCUSSION.md` for the latest decisions.
-4. Run `git log --oneline` on the branch `step-1`.
+4. Run `git log --oneline` on the branch `main`.
 5. Start the next milestone, or the open task that the person asks for.

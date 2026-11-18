@@ -73,10 +73,46 @@ impl KdfParams {
         iterations: 1,
         lanes: 1,
     };
+    /// The largest settings that PANIM accepts: 4 GiB of memory, 64 passes and 16 lanes.
+    ///
+    /// The header of the vault is not secret, and a person or a program can change it. Without a maximum, a changed
+    /// header can make Argon2id use all the memory of the computer, or run for hours. These values are much larger
+    /// than `STANDARD`, so a real vault does not get near them.
+    pub const MAX: KdfParams = KdfParams {
+        memory_kib: 4 * 1024 * 1024,
+        iterations: 64,
+        lanes: 16,
+    };
+
+    /// Gives `VaultError::Damaged` if one or more settings are above `MAX`. Argon2id does not run for these settings.
+    pub fn check(self) -> Result<(), VaultError> {
+        let max = KdfParams::MAX;
+        if self.memory_kib > max.memory_kib || self.iterations > max.iterations || self.lanes > max.lanes {
+            return Err(VaultError::Damaged(format!(
+                "the passcode settings are above the maximum: {self:?}"
+            )));
+        }
+        Ok(())
+    }
+
+    /// True if one or more settings are below the settings in `other`.
+    pub fn is_weaker_than(self, other: KdfParams) -> bool {
+        self.memory_kib < other.memory_kib || self.iterations < other.iterations || self.lanes < other.lanes
+    }
+
+    /// The larger value of each setting. The result is not weaker than `self` or `other`.
+    pub fn stronger(self, other: KdfParams) -> KdfParams {
+        KdfParams {
+            memory_kib: self.memory_kib.max(other.memory_kib),
+            iterations: self.iterations.max(other.iterations),
+            lanes: self.lanes.max(other.lanes),
+        }
+    }
 }
 
-/// Argon2id of the passcode.
+/// Argon2id of the passcode. Settings above `KdfParams::MAX` give `VaultError::Damaged`, before Argon2id runs.
 pub fn passcode_key(passcode: &str, salt: &[u8], params: KdfParams) -> Result<Key, VaultError> {
+    params.check()?;
     let params = Params::new(params.memory_kib, params.iterations, params.lanes, Some(KEY_LEN))
         .map_err(|e| VaultError::Damaged(format!("the passcode settings are not correct: {e}")))?;
     let mut out = Zeroizing::new([0u8; KEY_LEN]);

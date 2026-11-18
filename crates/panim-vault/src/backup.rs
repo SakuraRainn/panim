@@ -363,7 +363,7 @@ mod tests {
         assert_eq!(restore_backup(&target, &dir).unwrap(), info);
         assert!(staging_folders(&dir).is_empty());
         assert!(!dir.join("settings.json").exists() && !dir.join(GATE).exists());
-        let vault = Vault::open(&dir, "passcode1").unwrap();
+        let vault = Vault::open(&dir, "passcode1", KdfParams::TEST).unwrap();
         assert_eq!(vault.read("store/meta").unwrap().unwrap().as_slice(), b"the accounts");
         assert_eq!(vault.read("secrets").unwrap().unwrap().as_slice(), b"a token");
         let profile = ProfileArea::at(memory.path().join("again"))
@@ -379,7 +379,7 @@ mod tests {
         assert_eq!(restore_backup(&target, &dir).unwrap_err(), VaultError::InUse);
         drop(vault);
         assert_eq!(restore_backup(&target, &dir).unwrap_err(), VaultError::Exists);
-        assert!(Vault::open(&dir, "passcode1").is_ok());
+        assert!(Vault::open(&dir, "passcode1", KdfParams::TEST).is_ok());
     }
 
     #[test]

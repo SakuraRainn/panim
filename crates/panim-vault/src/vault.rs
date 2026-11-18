@@ -25,6 +25,13 @@ use zeroize::Zeroizing;
 use crate::VaultError;
 use crate::crypto::{self, KdfParams, Key};
 
+#[cfg(test)]
+thread_local! {
+    /// The state of the test hook `Vault::fail_write_after`: the number of writes before the failure.
+    /// Each test has its own thread, so the tests do not share it.
+    static FAIL_WRITE: std::cell::Cell<Option<u32>> = const { std::cell::Cell::new(None) };
+}
+
 const FORMAT: &str = "panim-vault/1";
 pub(crate) const FILE_MAGIC: &[u8; 4] = b"PNL1";
 pub(crate) const HEADER: &str = "vault.json";
@@ -115,14 +122,29 @@ impl Vault {
     }
 
     /// Opens the vault with the passcode. Each wrong passcode counts as a wrong try (`MAX_WRONG_TRIES`).
-    pub fn open(dir: &Path, passcode: &str) -> Result<Vault, VaultError> {
+    ///
+    /// `kdf` is the passcode settings of the app. If one or more settings in the header are below `kdf`, PANIM seals
+    /// the master key again with the stronger settings and a new salt. The passcode does not change. Settings in the
+    /// header above `KdfParams::MAX` give `VaultError::Damaged`.
+    pub fn open(dir: &Path, passcode: &str, kdf: KdfParams) -> Result<Vault, VaultError> {
         let lock = lock(dir)?;
-        let master = open_with_passcode(dir, passcode)?;
+        let (master, header) = open_with_passcode(dir, passcode)?;
+        if header.kdf.is_weaker_than(kdf) {
+            // The new seal uses the larger value of each setting, so that it is never weaker than the old seal.
+            // We keep the lock, so no other process writes the header at the same time.
+            //
+            // If this step fails (for example, the disk is full), the open still succeeds. The old header is
+            // complete, because `write_atomic` replaces the file or does not change it. The passcode still opens
+            // the old header, and the next open tries the new seal again. A refusal here would lock the person out
+            // of the data for a problem that is not in the vault.
+            let stronger = header.kdf.stronger(kdf);
+            let _ = with_passcode(header, &master, passcode, stronger).and_then(|header| write_header(dir, &header));
+        }
         Ok(Vault::from_master(dir, master, lock))
     }
 
     /// Makes sure that the passcode is correct, for example before a change of the passcode.
-    /// A wrong passcode counts as a wrong try.
+    /// A wrong passcode counts as a wrong try. This function does not change the header.
     pub fn verify_passcode(&self, passcode: &str) -> Result<(), VaultError> {
         open_with_passcode(&self.dir, passcode).map(|_| ())
     }
@@ -155,9 +177,30 @@ impl Vault {
 
     /// Writes bytes to a place, sealed. The write is complete or it does not occur.
     pub fn write(&self, place: &str, plain: &[u8]) -> Result<(), VaultError> {
+        #[cfg(test)]
+        match FAIL_WRITE.get() {
+            Some(0) => {
+                FAIL_WRITE.set(None);
+                return Err(VaultError::Io("the test hook stopped the write".into()));
+            }
+            Some(skip) => FAIL_WRITE.set(Some(skip - 1)),
+            None => {}
+        }
         let mut file = FILE_MAGIC.to_vec();
         file.extend_from_slice(&crypto::seal(&self.file_key(place), &aad_file(place), plain)?);
         write_atomic(&self.file_path(place), &file)
+    }
+
+    /// A test hook: the next `write` in this thread fails, and it does not change the disk.
+    #[cfg(test)]
+    pub(crate) fn fail_next_write() {
+        Vault::fail_write_after(0);
+    }
+
+    /// A test hook: `skip` writes in this thread occur, and then one write fails. It does not change the disk.
+    #[cfg(test)]
+    pub(crate) fn fail_write_after(skip: u32) {
+        FAIL_WRITE.set(Some(skip));
     }
 
     /// Reads the bytes of a place. Returns `None` if the place has no file.
@@ -219,13 +262,16 @@ impl Vault {
     }
 }
 
-/// Opens the master key with the passcode, and keeps the count of wrong tries.
-fn open_with_passcode(dir: &Path, passcode: &str) -> Result<Key, VaultError> {
+/// Opens the master key with the passcode, and keeps the count of wrong tries. Returns the master key and the
+/// header. Settings above `KdfParams::MAX` give `VaultError::Damaged` before Argon2id runs, and do not count as a
+/// wrong try.
+fn open_with_passcode(dir: &Path, passcode: &str) -> Result<(Key, Header), VaultError> {
     let mut gate = read_gate(dir)?;
     if gate.wrong >= MAX_WRONG_TRIES {
         return Err(VaultError::GateLocked);
     }
     let header = read_header(dir)?;
+    header.kdf.check()?;
     let salt = crypto::unhex(&header.salt).ok_or_else(|| VaultError::Damaged(HEADER.into()))?;
     let key = crypto::passcode_key(passcode, &salt, header.kdf)?;
     let sealed = crypto::unhex(&header.passcode_seal).ok_or_else(|| VaultError::Damaged(HEADER.into()))?;
@@ -234,7 +280,7 @@ fn open_with_passcode(dir: &Path, passcode: &str) -> Result<Key, VaultError> {
             if gate.wrong > 0 {
                 write_gate(dir, &Gate::default())?;
             }
-            to_key(&master)
+            Ok((to_key(&master)?, header))
         }
         None => {
             gate.wrong += 1;
@@ -399,7 +445,7 @@ mod tests {
         vault.write("store/meta", b"hello").unwrap();
         drop(vault);
 
-        let vault = Vault::open(dir.path(), "passcode1").unwrap();
+        let vault = Vault::open(dir.path(), "passcode1", KdfParams::TEST).unwrap();
         assert_eq!(vault.read("store/meta").unwrap().unwrap().as_slice(), b"hello");
         assert_eq!(vault.read("store/other").unwrap(), None);
         assert_eq!(Vault::recovery_address(dir.path()).unwrap(), persona.address());
@@ -409,7 +455,7 @@ mod tests {
     fn standard_settings_work() {
         let dir = tempfile::tempdir().unwrap();
         drop(Vault::create(dir.path(), "passcode1", &key(), KdfParams::STANDARD).unwrap());
-        assert!(Vault::open(dir.path(), "passcode1").is_ok());
+        assert!(Vault::open(dir.path(), "passcode1", KdfParams::TEST).is_ok());
     }
 
     #[test]
@@ -422,7 +468,7 @@ mod tests {
         );
         drop(Vault::create(dir.path(), "passcode1", &persona, KdfParams::TEST).unwrap());
         assert_eq!(
-            Vault::open(dir.path(), "passcode2").unwrap_err(),
+            Vault::open(dir.path(), "passcode2", KdfParams::TEST).unwrap_err(),
             VaultError::WrongPasscode { tries_left: 4 }
         );
         assert_eq!(
@@ -439,29 +485,29 @@ mod tests {
         assert_eq!(Vault::tries_left(dir.path()).unwrap(), 5);
         for left in (1..5).rev() {
             assert_eq!(
-                Vault::open(dir.path(), "wrong-one").unwrap_err(),
+                Vault::open(dir.path(), "wrong-one", KdfParams::TEST).unwrap_err(),
                 VaultError::WrongPasscode { tries_left: left }
             );
         }
         // A correct passcode resets the count.
-        drop(Vault::open(dir.path(), "passcode1").unwrap());
+        drop(Vault::open(dir.path(), "passcode1", KdfParams::TEST).unwrap());
         assert_eq!(Vault::tries_left(dir.path()).unwrap(), 5);
         for _ in 0..4 {
-            let _ = Vault::open(dir.path(), "wrong-one");
+            let _ = Vault::open(dir.path(), "wrong-one", KdfParams::TEST);
         }
         assert_eq!(
-            Vault::open(dir.path(), "wrong-one").unwrap_err(),
+            Vault::open(dir.path(), "wrong-one", KdfParams::TEST).unwrap_err(),
             VaultError::GateLocked
         );
         // The correct passcode does not open a locked gate.
         assert_eq!(
-            Vault::open(dir.path(), "passcode1").unwrap_err(),
+            Vault::open(dir.path(), "passcode1", KdfParams::TEST).unwrap_err(),
             VaultError::GateLocked
         );
         assert_eq!(Vault::tries_left(dir.path()).unwrap(), 0);
         drop(Vault::recover(dir.path(), &persona, "passcode2", KdfParams::TEST).unwrap());
         assert_eq!(Vault::tries_left(dir.path()).unwrap(), 5);
-        assert!(Vault::open(dir.path(), "passcode2").is_ok());
+        assert!(Vault::open(dir.path(), "passcode2", KdfParams::TEST).is_ok());
     }
 
     #[test]
@@ -480,7 +526,10 @@ mod tests {
     fn one_writer_only() {
         let dir = tempfile::tempdir().unwrap();
         let _vault = Vault::create(dir.path(), "passcode1", &key(), KdfParams::TEST).unwrap();
-        assert_eq!(Vault::open(dir.path(), "passcode1").unwrap_err(), VaultError::InUse);
+        assert_eq!(
+            Vault::open(dir.path(), "passcode1", KdfParams::TEST).unwrap_err(),
+            VaultError::InUse
+        );
     }
 
     #[test]
@@ -499,10 +548,10 @@ mod tests {
         assert_eq!(vault.read("secrets").unwrap().unwrap().as_slice(), b"token");
         drop(vault);
         assert_eq!(
-            Vault::open(dir.path(), "passcode1").unwrap_err(),
+            Vault::open(dir.path(), "passcode1", KdfParams::TEST).unwrap_err(),
             VaultError::WrongPasscode { tries_left: 4 }
         );
-        assert!(Vault::open(dir.path(), "passcode2").is_ok());
+        assert!(Vault::open(dir.path(), "passcode2", KdfParams::TEST).is_ok());
     }
 
     #[test]
@@ -512,7 +561,7 @@ mod tests {
         vault.write("a", b"1").unwrap();
         vault.change_passcode("passcode2", KdfParams::TEST).unwrap();
         drop(vault);
-        let vault = Vault::open(dir.path(), "passcode2").unwrap();
+        let vault = Vault::open(dir.path(), "passcode2", KdfParams::TEST).unwrap();
         assert_eq!(vault.read("a").unwrap().unwrap().as_slice(), b"1");
     }
 
@@ -538,5 +587,161 @@ mod tests {
         }
         let header = fs::read_to_string(dir.path().join(HEADER)).unwrap();
         assert!(!header.contains("passcode1"));
+    }
+
+    /// Settings that are stronger than `KdfParams::TEST`, but still cheap.
+    const STRONGER: KdfParams = KdfParams {
+        memory_kib: 16,
+        iterations: 2,
+        lanes: 1,
+    };
+
+    fn set_header_kdf(dir: &Path, kdf: KdfParams) {
+        let mut header = read_header(dir).unwrap();
+        header.kdf = kdf;
+        write_header(dir, &header).unwrap();
+    }
+
+    #[test]
+    fn open_makes_weak_settings_stronger() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::create(dir.path(), "passcode1", &key(), KdfParams::TEST).unwrap();
+        vault.write("a", b"1").unwrap();
+        drop(vault);
+        let before = read_header(dir.path()).unwrap();
+
+        let vault = Vault::open(dir.path(), "passcode1", STRONGER).unwrap();
+        let after = read_header(dir.path()).unwrap();
+        assert_eq!(after.kdf, STRONGER);
+        assert_ne!(after.salt, before.salt);
+        assert_ne!(after.passcode_seal, before.passcode_seal);
+        assert_eq!(after.recovery.seal, before.recovery.seal);
+        assert_eq!(vault.read("a").unwrap().unwrap().as_slice(), b"1");
+        drop(vault);
+
+        // The passcode still opens the vault. Weaker settings of the app do not make the header weaker.
+        let vault = Vault::open(dir.path(), "passcode1", KdfParams::TEST).unwrap();
+        assert_eq!(vault.read("a").unwrap().unwrap().as_slice(), b"1");
+        drop(vault);
+        let header = read_header(dir.path()).unwrap();
+        assert_eq!(header.kdf, STRONGER);
+        assert_eq!(header.salt, after.salt);
+
+        // The count of wrong tries does not change.
+        assert_eq!(
+            Vault::open(dir.path(), "passcode2", STRONGER).unwrap_err(),
+            VaultError::WrongPasscode { tries_left: 4 }
+        );
+        assert_eq!(read_header(dir.path()).unwrap().salt, after.salt);
+        drop(Vault::open(dir.path(), "passcode1", STRONGER).unwrap());
+        assert_eq!(Vault::tries_left(dir.path()).unwrap(), 5);
+    }
+
+    #[test]
+    fn open_keeps_the_stronger_value_of_each_setting() {
+        let dir = tempfile::tempdir().unwrap();
+        let more_memory = KdfParams {
+            memory_kib: 32,
+            iterations: 1,
+            lanes: 1,
+        };
+        drop(Vault::create(dir.path(), "passcode1", &key(), more_memory).unwrap());
+        drop(Vault::open(dir.path(), "passcode1", STRONGER).unwrap());
+        let expected = KdfParams {
+            memory_kib: 32,
+            iterations: 2,
+            lanes: 1,
+        };
+        assert_eq!(read_header(dir.path()).unwrap().kdf, expected);
+        assert!(Vault::open(dir.path(), "passcode1", STRONGER).is_ok());
+    }
+
+    #[test]
+    fn verify_passcode_does_not_change_the_header() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::create(dir.path(), "passcode1", &key(), KdfParams::TEST).unwrap();
+        let before = fs::read(dir.path().join(HEADER)).unwrap();
+        vault.verify_passcode("passcode1").unwrap();
+        assert_eq!(fs::read(dir.path().join(HEADER)).unwrap(), before);
+    }
+
+    #[test]
+    fn a_failed_write_of_the_new_seal_does_not_stop_the_open() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        drop(Vault::create(dir.path(), "passcode1", &key(), KdfParams::TEST).unwrap());
+        // A folder without write permission stops the write of the header. The lock file exists already.
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o500)).unwrap();
+        let writable = File::create_new(dir.path().join("probe")).is_ok();
+        let result = Vault::open(dir.path(), "passcode1", STRONGER);
+        let kdf = read_header(dir.path()).unwrap().kdf;
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        if writable {
+            // The user is root, so the permissions do not stop the write. This test cannot do its check.
+            return;
+        }
+        assert!(result.is_ok());
+        assert_eq!(kdf, KdfParams::TEST);
+        drop(result);
+        // The next open makes the settings stronger.
+        drop(Vault::open(dir.path(), "passcode1", STRONGER).unwrap());
+        assert_eq!(read_header(dir.path()).unwrap().kdf, STRONGER);
+    }
+
+    #[test]
+    fn settings_above_the_maximum_are_damaged() {
+        let too_large = [
+            KdfParams {
+                memory_kib: u32::MAX,
+                ..KdfParams::TEST
+            },
+            KdfParams {
+                memory_kib: KdfParams::MAX.memory_kib + 1,
+                ..KdfParams::TEST
+            },
+            KdfParams {
+                iterations: KdfParams::MAX.iterations + 1,
+                ..KdfParams::TEST
+            },
+            KdfParams {
+                memory_kib: 8 * (KdfParams::MAX.lanes + 1),
+                iterations: 1,
+                lanes: KdfParams::MAX.lanes + 1,
+            },
+        ];
+        for kdf in too_large {
+            let dir = tempfile::tempdir().unwrap();
+            let persona = key();
+            let vault = Vault::create(dir.path(), "passcode1", &persona, KdfParams::TEST).unwrap();
+            set_header_kdf(dir.path(), kdf);
+            // Argon2id does not run, so these calls are fast and do not take the memory.
+            let start = std::time::Instant::now();
+            assert!(matches!(
+                vault.verify_passcode("passcode1"),
+                Err(VaultError::Damaged(_))
+            ));
+            drop(vault);
+            assert!(matches!(
+                Vault::open(dir.path(), "passcode1", KdfParams::TEST),
+                Err(VaultError::Damaged(_))
+            ));
+            assert!(start.elapsed() < std::time::Duration::from_secs(1));
+            // A damaged header is not a wrong try.
+            assert_eq!(Vault::tries_left(dir.path()).unwrap(), 5);
+            // The persona key does not use these settings. It recovers the vault with the settings of the app.
+            drop(Vault::recover(dir.path(), &persona, "passcode2", KdfParams::TEST).unwrap());
+            assert_eq!(read_header(dir.path()).unwrap().kdf, KdfParams::TEST);
+            assert!(Vault::open(dir.path(), "passcode2", KdfParams::TEST).is_ok());
+        }
+    }
+
+    #[test]
+    fn the_maximum_is_allowed_and_above_the_standard() {
+        assert!(KdfParams::MAX.check().is_ok());
+        assert!(KdfParams::STANDARD.check().is_ok());
+        assert!(KdfParams::STANDARD.is_weaker_than(KdfParams::MAX));
+        assert!(KdfParams::TEST.is_weaker_than(KdfParams::STANDARD));
+        assert!(!KdfParams::STANDARD.is_weaker_than(KdfParams::TEST));
+        assert!(!KdfParams::STANDARD.is_weaker_than(KdfParams::STANDARD));
     }
 }

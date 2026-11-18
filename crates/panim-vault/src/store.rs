@@ -12,8 +12,13 @@
 //!
 //! `SealedSecrets` writes all secrets to `secrets` after each change.
 //!
-//! If a write fails, the method gives `Error::Storage`. The data in memory can then be different from the data on
-//! the disk. Open the store again after this error.
+//! Each change keeps a copy of the part that it changes: the meta, the items of one account, the proofs or the
+//! secret table. If the write fails, the change puts the copy back and gives `Error::Storage`. Thus, the data in
+//! memory stays the same as the data on the disk. `Vault::write` writes a temporary file and then renames it, so
+//! each file on the disk is complete.
+//!
+//! `remove_account` writes more than one file. It writes the meta first. If a later step fails, an items file or a
+//! proof without its account stays on the disk. `SealedStore::open` ignores this data.
 
 use std::sync::Arc;
 
@@ -111,17 +116,27 @@ impl SealedStore {
         if self.inner.account(account).is_none() {
             return Err(Error::UnknownAccount(account));
         }
-        self.proofs.insert(account, proof);
-        self.save_proofs()
+        let old = self.proofs.insert(account, proof);
+        if let Err(error) = self.save_proofs() {
+            match old {
+                Some(old) => self.proofs.insert(account, old),
+                None => self.proofs.remove(&account),
+            };
+            return Err(error);
+        }
+        Ok(())
     }
 
     /// Removes the kept proof of an account. Returns true if there was a kept proof.
     pub fn forget_proof(&mut self, account: AccountId) -> Result<bool> {
-        let removed = self.proofs.remove(&account).is_some();
-        if removed {
-            self.save_proofs()?;
+        let Some(old) = self.proofs.remove(&account) else {
+            return Ok(false);
+        };
+        if let Err(error) = self.save_proofs() {
+            self.proofs.insert(account, old);
+            return Err(error);
         }
-        Ok(removed)
+        Ok(true)
     }
 
     fn save_proofs(&self) -> Result<()> {
@@ -139,13 +154,41 @@ impl SealedStore {
     fn save_items(&self, account: AccountId) -> Result<()> {
         save(&self.vault, &items_place(account), &self.inner.items_of(account))
     }
+
+    /// Does a change to the meta and writes the meta. If the write fails, the meta in memory goes back.
+    fn change_meta<T>(&mut self, change: impl FnOnce(&mut MemoryStore) -> Result<T>) -> Result<T> {
+        let before = self.inner.meta();
+        let value = change(&mut self.inner)?;
+        if let Err(error) = self.save_meta() {
+            self.inner.restore_meta(before);
+            return Err(error);
+        }
+        Ok(value)
+    }
+
+    /// Does a change to the items of one account. If `changed` is true for the result, the store writes the items
+    /// of the account. If the write fails, the items of the account in memory go back.
+    fn change_items<T>(
+        &mut self,
+        account: AccountId,
+        change: impl FnOnce(&mut MemoryStore) -> Result<T>,
+        changed: impl FnOnce(&T) -> bool,
+    ) -> Result<T> {
+        let before = self.inner.items_of(account);
+        let value = change(&mut self.inner)?;
+        if changed(&value)
+            && let Err(error) = self.save_items(account)
+        {
+            self.inner.replace_items(account, before);
+            return Err(error);
+        }
+        Ok(value)
+    }
 }
 
 impl Store for SealedStore {
     fn add_persona(&mut self, persona: NewPersona) -> Result<Persona> {
-        let persona = self.inner.add_persona(persona)?;
-        self.save_meta()?;
-        Ok(persona)
+        self.change_meta(|inner| inner.add_persona(persona))
     }
 
     fn persona(&self, id: PersonaId) -> Option<Persona> {
@@ -157,14 +200,11 @@ impl Store for SealedStore {
     }
 
     fn set_route(&mut self, persona: PersonaId, route: Route) -> Result<()> {
-        self.inner.set_route(persona, route)?;
-        self.save_meta()
+        self.change_meta(|inner| inner.set_route(persona, route))
     }
 
     fn add_account(&mut self, account: NewAccount) -> Result<Account> {
-        let account = self.inner.add_account(account)?;
-        self.save_meta()?;
-        Ok(account)
+        self.change_meta(|inner| inner.add_account(account))
     }
 
     fn account(&self, id: AccountId) -> Option<Account> {
@@ -175,32 +215,43 @@ impl Store for SealedStore {
         self.inner.accounts(persona)
     }
 
+    /// Removes the account from the meta first. If that write fails, nothing changes.
+    ///
+    /// After the meta is on the disk, the account is removed. Then the store removes the items file and the kept
+    /// proof. If one of these steps fails, the method still gives the account, because the account is not on the
+    /// disk. The file or the proof stays on the disk, but `SealedStore::open` ignores the data of an account that
+    /// is not in the meta. The memory has no data of the account, the same as the store that opens again.
     fn remove_account(&mut self, id: AccountId) -> Result<Account> {
+        let items = self.inner.items_of(id);
+        let before = self.inner.meta();
         let account = self.inner.remove_account(id)?;
-        self.save_meta()?;
-        self.vault.remove(&items_place(id)).map_err(storage)?;
-        self.forget_proof(id)?;
+        if let Err(error) = self.save_meta() {
+            self.inner.restore_meta(before);
+            self.inner.replace_items(id, items);
+            return Err(error);
+        }
+        // An error here does not change the result. The next write of the proofs does not include the proof.
+        let _ = self.vault.remove(&items_place(id));
+        if self.proofs.remove(&id).is_some() {
+            let _ = self.save_proofs();
+        }
         Ok(account)
     }
 
     fn set_identity(&mut self, id: AccountId, handle: String, remote_id: Option<String>) -> Result<Account> {
-        let account = self.inner.set_identity(id, handle, remote_id)?;
-        self.save_meta()?;
-        Ok(account)
+        self.change_meta(|inner| inner.set_identity(id, handle, remote_id))
     }
 
     fn put_items(&mut self, account: AccountId, items: Vec<NewItem>) -> Result<usize> {
-        let added = self.inner.put_items(account, items)?;
-        self.save_items(account)?;
-        Ok(added)
+        self.change_items(account, |inner| inner.put_items(account, items), |_| true)
     }
 
     fn remove_items(&mut self, account: AccountId, source_ids: &[String]) -> Result<usize> {
-        let removed = self.inner.remove_items(account, source_ids)?;
-        if removed > 0 {
-            self.save_items(account)?;
-        }
-        Ok(removed)
+        self.change_items(
+            account,
+            |inner| inner.remove_items(account, source_ids),
+            |removed| *removed > 0,
+        )
     }
 
     fn timeline(&self, filter: &TimelineFilter) -> Vec<TimelineItem> {
@@ -208,16 +259,15 @@ impl Store for SealedStore {
     }
 
     fn set_read(&mut self, key: &ItemKey, read: bool) -> Result<()> {
-        self.inner.set_read(key, read)?;
-        self.save_items(key.account)
+        self.change_items(key.account, |inner| inner.set_read(key, read), |_| true)
     }
 
     fn set_read_many(&mut self, account: AccountId, changes: &[(String, bool)]) -> Result<usize> {
-        let changed = self.inner.set_read_many(account, changes)?;
-        if changed > 0 {
-            self.save_items(account)?;
-        }
-        Ok(changed)
+        self.change_items(
+            account,
+            |inner| inner.set_read_many(account, changes),
+            |changed| *changed > 0,
+        )
     }
 
     fn unread_count(&self, account: AccountId) -> usize {
@@ -242,8 +292,13 @@ impl SealedSecrets {
 
 impl SecretStore for SealedSecrets {
     fn put(&mut self, secret: SecretBytes) -> Result<SecretRef> {
+        let next = self.table.next;
         let reference = self.table.put(secret);
-        save(&self.vault, SECRETS, &self.table)?;
+        if let Err(error) = save(&self.vault, SECRETS, &self.table) {
+            self.table.secrets.remove(&reference);
+            self.table.next = next;
+            return Err(error);
+        }
         Ok(reference)
     }
 
@@ -252,11 +307,14 @@ impl SecretStore for SealedSecrets {
     }
 
     fn remove(&mut self, reference: SecretRef) -> Result<bool> {
-        let removed = self.table.secrets.remove(&reference).is_some();
-        if removed {
-            save(&self.vault, SECRETS, &self.table)?;
+        let Some(old) = self.table.secrets.remove(&reference) else {
+            return Ok(false);
+        };
+        if let Err(error) = save(&self.vault, SECRETS, &self.table) {
+            self.table.secrets.insert(reference, old);
+            return Err(error);
         }
-        Ok(removed)
+        Ok(true)
     }
 }
 
@@ -264,7 +322,7 @@ impl SecretStore for SealedSecrets {
 mod tests {
     use super::*;
     use crate::KdfParams;
-    use panim_core::{JoinedAccess, PersonaKey, Platform, Timestamp};
+    use panim_core::{JoinedAccess, PersonaKey, Platform, ProxyEndpoint, ProxyKind, Timestamp};
 
     fn item(id: &str, time: i64) -> NewItem {
         NewItem {
@@ -324,7 +382,7 @@ mod tests {
         let timeline = store.timeline(&TimelineFilter::default());
         drop((store, secrets, vault));
 
-        let vault = Arc::new(Vault::open(dir.path(), "passcode1").unwrap());
+        let vault = Arc::new(Vault::open(dir.path(), "passcode1", KdfParams::TEST).unwrap());
         let store = SealedStore::open(vault.clone()).unwrap();
         let secrets = SealedSecrets::open(vault).unwrap();
         assert_eq!(store.personas(), vec![me]);
@@ -528,7 +586,7 @@ mod tests {
         );
         drop((store, vault));
 
-        let vault = Arc::new(Vault::open(dir.path(), "passcode1").unwrap());
+        let vault = Arc::new(Vault::open(dir.path(), "passcode1", KdfParams::TEST).unwrap());
         let store = SealedStore::open(vault.clone()).unwrap();
         assert_eq!(store.kept_proof(AccountId(1)), Some(&proof("block 1")));
         assert_eq!(store.account(AccountId(2)).unwrap().remote_id.as_deref(), Some("12345"));
@@ -580,5 +638,195 @@ mod tests {
         let store = SealedStore::open(vault).unwrap();
         assert_eq!(store.kept_proof(first.id), None);
         assert_eq!(store.kept_proof(second.id), Some(&proof));
+    }
+
+    /// The data of a store that a failed write must not change.
+    #[derive(Debug, PartialEq)]
+    struct Snapshot {
+        meta: StoreMeta,
+        timeline: Vec<TimelineItem>,
+        proofs: BTreeMap<AccountId, KeptProof>,
+    }
+
+    fn snapshot(store: &SealedStore) -> Snapshot {
+        Snapshot {
+            meta: store.inner.meta(),
+            timeline: store.timeline(&TimelineFilter::default()),
+            proofs: store.proofs.clone(),
+        }
+    }
+
+    /// A vault with a persona, two GitHub accounts with items, and a kept proof for the first account.
+    struct Fixture {
+        _dir: tempfile::TempDir,
+        vault: Arc<Vault>,
+        store: SealedStore,
+        persona: PersonaId,
+        first: AccountId,
+        second: AccountId,
+    }
+
+    fn fixture() -> Fixture {
+        let dir = tempfile::tempdir().unwrap();
+        let key = PersonaKey::generate().unwrap();
+        let vault = Arc::new(Vault::create(dir.path(), "passcode1", &key, KdfParams::TEST).unwrap());
+        let mut store = SealedStore::open(vault.clone()).unwrap();
+        let persona = store
+            .add_persona(NewPersona {
+                name: "Me".into(),
+                address: key.address(),
+                route: Route::Direct,
+            })
+            .unwrap()
+            .id;
+        let mut ids = Vec::new();
+        for _ in 0..2 {
+            let account = store.add_account(github(persona)).unwrap();
+            store.put_items(account.id, vec![item("x", 1), item("y", 2)]).unwrap();
+            ids.push(account.id);
+        }
+        let proof = KeptProof {
+            block: "b".into(),
+            location: None,
+        };
+        store.keep_proof(ids[0], proof).unwrap();
+        Fixture {
+            _dir: dir,
+            vault,
+            store,
+            persona,
+            first: ids[0],
+            second: ids[1],
+        }
+    }
+
+    fn github(persona: PersonaId) -> NewAccount {
+        NewAccount {
+            persona,
+            platform: Platform::GitHub,
+            display_name: "G".into(),
+            handle: "me".into(),
+            remote_id: Some("1".into()),
+            joined: Some(JoinedAccess {
+                credentials: SecretRef(1),
+            }),
+            browser: None,
+        }
+    }
+
+    /// Makes the next write fail and does the change. The change must give `Error::Storage`. The data in memory and
+    /// the data of a store that opens again must be the same as before the change.
+    fn fails_without_change<T: std::fmt::Debug>(f: &mut Fixture, change: impl FnOnce(&mut SealedStore) -> Result<T>) {
+        let before = snapshot(&f.store);
+        Vault::fail_next_write();
+        let result = change(&mut f.store);
+        assert!(matches!(result, Err(Error::Storage(_))), "{result:?}");
+        assert_eq!(snapshot(&f.store), before);
+        assert_eq!(snapshot(&SealedStore::open(f.vault.clone()).unwrap()), before);
+    }
+
+    #[test]
+    fn a_failed_write_does_not_change_the_meta() {
+        let mut f = fixture();
+        let (persona, first) = (f.persona, f.first);
+        fails_without_change(&mut f, |s| {
+            s.add_persona(NewPersona {
+                name: "Other".into(),
+                address: PersonaKey::generate().unwrap().address(),
+                route: Route::Direct,
+            })
+        });
+        fails_without_change(&mut f, |s| {
+            s.set_route(
+                persona,
+                Route::Proxy(ProxyEndpoint {
+                    kind: ProxyKind::Socks5,
+                    host: "127.0.0.1".into(),
+                    port: 9050,
+                }),
+            )
+        });
+        fails_without_change(&mut f, |s| s.add_account(github(persona)));
+        fails_without_change(&mut f, |s| s.set_identity(first, "other".into(), Some("2".into())));
+        fails_without_change(&mut f, |s| s.remove_account(first));
+        // The hook stopped only one write each time. The next change succeeds.
+        f.store.set_identity(first, "other".into(), None).unwrap();
+        assert_eq!(f.store.account(first).unwrap().handle, "other");
+    }
+
+    #[test]
+    fn a_failed_write_does_not_change_the_items() {
+        let mut f = fixture();
+        let first = f.first;
+        let key = ItemKey {
+            account: first,
+            source_id: "x".into(),
+        };
+        f.store.set_read(&key, true).unwrap();
+        // A new item, and a later time for an item that is read.
+        fails_without_change(&mut f, |s| s.put_items(first, vec![item("z", 3), item("x", 5)]));
+        fails_without_change(&mut f, |s| s.remove_items(first, &["x".to_string()]));
+        fails_without_change(&mut f, |s| s.set_read(&key, false));
+        fails_without_change(&mut f, |s| s.set_read_many(first, &[("y".to_string(), true)]));
+    }
+
+    #[test]
+    fn a_failed_write_does_not_change_the_proofs() {
+        let mut f = fixture();
+        let (first, second) = (f.first, f.second);
+        let proof = KeptProof {
+            block: "new".into(),
+            location: Some("https://gist.github.com/me/1".into()),
+        };
+        // A replaced proof and a new proof.
+        fails_without_change(&mut f, |s| s.keep_proof(first, proof.clone()));
+        fails_without_change(&mut f, |s| s.keep_proof(second, proof.clone()));
+        fails_without_change(&mut f, |s| s.forget_proof(first));
+    }
+
+    #[test]
+    fn remove_account_succeeds_when_a_step_after_the_meta_fails() {
+        let mut f = fixture();
+        let first = f.first;
+        // The write of the meta occurs. The write of the proofs fails.
+        Vault::fail_write_after(1);
+        assert_eq!(f.store.remove_account(first).map(|a| a.id), Ok(first));
+        let after = snapshot(&f.store);
+        assert!(after.meta.accounts.iter().all(|a| a.id != first));
+        assert!(after.timeline.iter().all(|i| i.key.account != first));
+        assert_eq!(after.proofs.get(&first), None);
+        // The old proof is on the disk, but the store that opens again ignores it.
+        assert_eq!(snapshot(&SealedStore::open(f.vault.clone()).unwrap()), after);
+    }
+
+    #[test]
+    fn a_failed_write_does_not_change_the_secrets() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = PersonaKey::generate().unwrap();
+        let vault = Arc::new(Vault::create(dir.path(), "passcode1", &key, KdfParams::TEST).unwrap());
+        let mut secrets = SealedSecrets::open(vault.clone()).unwrap();
+        let token = secrets.put(SecretBytes::new(b"token".to_vec())).unwrap();
+        let state = |secrets: &SealedSecrets| {
+            let table = &secrets.table;
+            let entries: Vec<_> = table.secrets.iter().map(|(r, s)| (*r, s.expose().to_vec())).collect();
+            (table.next, entries)
+        };
+        let before = state(&secrets);
+
+        Vault::fail_next_write();
+        assert!(matches!(
+            secrets.put(SecretBytes::new(b"new".to_vec())),
+            Err(Error::Storage(_))
+        ));
+        assert_eq!(state(&secrets), before);
+        assert_eq!(state(&SealedSecrets::open(vault.clone()).unwrap()), before);
+
+        Vault::fail_next_write();
+        assert!(matches!(secrets.remove(token), Err(Error::Storage(_))));
+        assert_eq!(state(&secrets), before);
+        assert_eq!(state(&SealedSecrets::open(vault.clone()).unwrap()), before);
+
+        // The reference of the failed put is free, so the next put gets it.
+        assert_eq!(secrets.put(SecretBytes::new(b"new".to_vec())), Ok(SecretRef(2)));
     }
 }

@@ -35,7 +35,7 @@ pub enum Error {
     },
     /// The account cannot get timeline items, because it is not joined.
     NotJoined(AccountId),
-    /// The store could not read or write its data. After this error, open the store again.
+    /// The store could not read or write its data. A failed change does not change the data in the store.
     Storage(String),
 }
 
@@ -179,6 +179,29 @@ impl MemoryStore {
             .filter(|item| item.key.account == account)
             .cloned()
             .collect()
+    }
+
+    /// Puts back the personas, the accounts and the next identifiers from `meta`. The timeline items do not change.
+    ///
+    /// A sealed store uses this to put back a copy after a failed write.
+    pub fn restore_meta(&mut self, meta: StoreMeta) {
+        self.next_persona = meta.next_persona;
+        self.next_account = meta.next_account;
+        self.personas = meta.personas.into_iter().map(|persona| (persona.id, persona)).collect();
+        self.accounts = meta.accounts.into_iter().map(|account| (account.id, account)).collect();
+    }
+
+    /// Replaces all the timeline items of one account with `items`. Items of a different account are not kept.
+    ///
+    /// A sealed store uses this to put back a copy after a failed write.
+    pub fn replace_items(&mut self, account: AccountId, items: Vec<TimelineItem>) {
+        self.items.retain(|key, _| key.account != account);
+        self.items.extend(
+            items
+                .into_iter()
+                .filter(|item| item.key.account == account)
+                .map(|item| (item.key.clone(), item)),
+        );
     }
 
     /// Makes a store from its parts. Items of an account that is not in `meta` are not kept.
@@ -718,6 +741,35 @@ mod tests {
             .add_account(new_account(me, Platform::Telegram, true, false))
             .unwrap();
         assert_eq!(next.id, AccountId(3));
+    }
+
+    #[test]
+    fn restore_puts_back_the_meta_and_the_items_of_one_account() {
+        let (mut store, persona) = store_with_persona();
+        let first = store
+            .add_account(new_account(persona, Platform::GitHub, true, false))
+            .unwrap();
+        let second = store
+            .add_account(new_account(persona, Platform::GitHub, true, false))
+            .unwrap();
+        store.put_items(first.id, vec![item("a", 1)]).unwrap();
+        store.put_items(second.id, vec![item("b", 2)]).unwrap();
+        let (meta, items) = (store.meta(), store.items_of(first.id));
+        let timeline = store.timeline(&TimelineFilter::default());
+
+        store.remove_account(first.id).unwrap();
+        store
+            .add_account(new_account(persona, Platform::Telegram, true, false))
+            .unwrap();
+        store.restore_meta(meta.clone());
+        store.replace_items(first.id, items);
+        assert_eq!(store.meta(), meta);
+        assert_eq!(store.timeline(&TimelineFilter::default()), timeline);
+
+        // The items of a different account do not go into the account.
+        store.replace_items(first.id, store.items_of(second.id));
+        assert!(store.items_of(first.id).is_empty());
+        assert_eq!(store.items_of(second.id).len(), 1);
     }
 
     #[test]

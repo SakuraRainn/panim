@@ -1335,4 +1335,51 @@ mod tests {
             Err("own_other_account")
         );
     }
+
+    #[test]
+    fn many_events_do_not_hide_the_unread_threads() {
+        let f = Fixture::new();
+        let account = f.login();
+        let threads = thread_items(THREADS);
+        let newest = threads.iter().map(|item| item.time.0).max().unwrap();
+        // 600 events are more recent than the two threads. Events have no read state, so they stay unread.
+        let events = (0..600).map(|n| panim_core::NewItem {
+            source_id: format!("e/{}", 10_000 + n),
+            author: "alice".into(),
+            time: panim_core::Timestamp(newest + 1 + n),
+            text: "starred octocat/project".into(),
+            link: None,
+            raw: br#"{"type":"WatchEvent","repo":{"name":"octocat/project"}}"#.to_vec(),
+        });
+        f.with(|s| s.put_test_items(account.id, threads.into_iter().chain(events).collect()));
+
+        // The window asks for the timeline with the limit of 500.
+        let filter = |unread_only| TimelineFilter {
+            accounts: Some(vec![account.id]),
+            unread_only,
+            limit: Some(500),
+            ..Default::default()
+        };
+        let unread = f.with(|s| s.timeline(&filter(true)).unwrap());
+        let ids: Vec<_> = unread.iter().map(|item| item.key.source_id.as_str()).collect();
+        assert_eq!(ids, ["n/101", "n/103"], "the older unread threads show");
+
+        // The normal timeline keeps the limit. The most recent items are first, so it has only events.
+        let all = f.with(|s| s.timeline(&filter(false)).unwrap());
+        assert_eq!(all.len(), 500);
+        assert!(all.iter().all(|item| item.key.source_id.starts_with("e/")));
+        assert_eq!(all[0].key.source_id, "e/10599");
+
+        // A smaller limit applies to the unread items too.
+        let one = TimelineFilter {
+            limit: Some(1),
+            ..filter(true)
+        };
+        let first = f.with(|s| s.timeline(&one).unwrap());
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0].key.source_id, "n/101");
+
+        // The count is the count of the inbox. The events do not count.
+        assert_eq!(f.with(|s| s.sync_state().unwrap())[&account.id.0].unread, 2);
+    }
 }

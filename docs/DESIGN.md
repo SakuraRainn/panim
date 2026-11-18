@@ -53,6 +53,13 @@ PANIM does not support the Meta services (Facebook, Instagram, Threads and Whats
 
 The recommended order: GitHub, Telegram, Proton Mail, X, Discord.
 
+Release 0.3.0 adds two platforms (`DISCUSSION.md` §42):
+
+| Platform | How PANIM shows it | Notes |
+|---|---|---|
+| Bluesky | In the shared timeline | The AT Protocol is an open API for clients. The stable id of an account is its DID. |
+| Email services | In the shared timeline | IMAP/SMTP with a password or an app password, for example Fastmail, mailbox.org, iCloud, Yahoo and Gmail. Proton Mail Bridge uses the same connector. Tuta has no IMAP, so it stays in a browser view. |
+
 ## 5. Two types of account
 
 - **Joined accounts** send their updates to the shared timeline. PANIM reads the updates and keeps them on the computer. The person searches and answers them in PANIM.
@@ -89,6 +96,7 @@ The proof must stay in a public location on the platform. A more public platform
 | X | A pinned post, or a link in the bio | Strong while the post stays |
 | Telegram | A message in a public channel, or the bio | Good. The bio is short, so it can hold only a link to the statement. |
 | Discord | "About me", or a message in a server | Weak. Usually, only the people in the same server see the profile. |
+| Bluesky (release 0.3.0) | A pinned post, or a link in the bio | Strong. Each post is a public record in the signed repository of the account. A post cannot change after it is published. |
 | Email | A signed message, or a DNS record for a domain that the person has | On a shared service, the proof is only for the person who gets the message. With a domain of the person, the proof is for all people. |
 
 Known limit: Before step 3, a persona cannot replace a lost or stolen key and keep its history. The persona must start again with a new key. PANIM seals the key with the other secrets when the key is not in use.

@@ -2,6 +2,23 @@
 
 All the changes of PANIM that a user can see are in this file. The versions use semantic versioning.
 
+## 0.1.2 (2026-11-18)
+
+This release has no new feature. It repairs six problems.
+
+### Changes
+
+- **The automatic lock counts the input in all the windows.** Before, only the input in the main window reset the time. If you worked in a browser view, PANIM locked and closed the window. Now a key press, a click or a scroll in a browser view also resets the time. PANIM gets this input from the system, not from the page, so a page cannot stop the lock.
+- **Stronger passcode settings.** When your passcode opens a vault with weaker Argon2id settings than the settings of PANIM, PANIM seals the vault again with the stronger settings. Your passcode does not change. PANIM refuses a vault file with settings that are too large.
+- **A failed write does not change the data in PANIM.** Before, if a write to the disk failed, PANIM could show data that was not on the disk. Now PANIM puts back the data that it had before the change.
+- **Limits for a key file.** PANIM refuses a key file with scrypt or pbkdf2 settings above a limit. Before, such a file could stop PANIM or use all the memory. PANIM also compares the check value of the file in constant time.
+- **The unread GitHub notifications show.** Before, with the filter "unread", many GitHub events could hide older unread notifications.
+- **The timeline shows the selected filter.** Before, a slow older answer could replace the timeline after a fast change of the filter.
+
+### Known limits
+
+The known limits of 0.1.1 do not change, except that the automatic lock now counts the input in all the windows. During many Telegram updates at the same time, the timeline can stay the same until the updates stop. Release 0.1.3 sends fewer updates.
+
 ## 0.1.1 (2026-11-18)
 
 This release has no new feature. It changes the documents, the release steps and one error message of the AppImage.

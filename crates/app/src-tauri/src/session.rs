@@ -592,7 +592,7 @@ impl Session {
 
     /// Opens the vault with the passcode.
     pub fn unlock(&mut self, passcode: &str) -> AppResult<()> {
-        let vault = Arc::new(Vault::open(&self.data, passcode)?);
+        let vault = Arc::new(Vault::open(&self.data, passcode, self.strength.kdf)?);
         self.load(vault)
     }
 
@@ -939,6 +939,10 @@ impl Session {
     }
 
     /// The timeline items that agree with the filter, in the form for the user interface.
+    ///
+    /// With `unread_only`, the items without a read state (the GitHub events) are not in the result. The session
+    /// removes them before it applies the limit. Thus, many events do not push the unread notifications out of
+    /// the result.
     pub fn timeline(&self, filter: &TimelineFilter) -> AppResult<Vec<ItemView>> {
         let open = self.open_ref()?;
         let github: Vec<AccountId> = open
@@ -948,7 +952,12 @@ impl Session {
             .filter(|account| account.platform == Platform::GitHub)
             .map(|account| account.id)
             .collect();
-        let items = open.store.timeline(filter).into_iter().filter_map(|item| {
+        // The store gets the filter without the limit. The session applies the limit after it removes items.
+        let all = TimelineFilter {
+            limit: None,
+            ..filter.clone()
+        };
+        let items = open.store.timeline(&all).into_iter().filter_map(|item| {
             let is_github = github.contains(&item.key.account);
             // Only a Telegram account has items with the prefix of a chat and this form of the raw record.
             let chat = (!is_github && item.key.source_id.starts_with(panim_telegram::CHAT_PREFIX))
@@ -975,7 +984,7 @@ impl Session {
                 read: item.read || !has_read_state,
             })
         });
-        Ok(items.collect())
+        Ok(items.take(filter.limit.unwrap_or(usize::MAX)).collect())
     }
 
     /// Sets the read state of a timeline item in the local store.
@@ -2161,7 +2170,7 @@ sig 0xb566ce41a13d26ab1ed686f0f3032e296d6eb7953aa0ccef96065dbc33313ba771817564b3
         session.lock().unwrap();
         // The vault has no file of proofs, as a vault from before milestone 6.
         {
-            let vault = Vault::open(&f.data, "passcode1").unwrap();
+            let vault = Vault::open(&f.data, "passcode1", KdfParams::TEST).unwrap();
             assert!(vault.read("store/proofs").unwrap().is_none());
         }
         session.unlock("passcode1").unwrap();

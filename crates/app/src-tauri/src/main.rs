@@ -3,6 +3,8 @@
 //! - `session` holds the state of the app, without Tauri.
 //! - The commands in this file give the session to the user interface.
 //! - `unread` holds the unread state of the account windows, without Tauri.
+//! - `activity` limits the event `input-elsewhere`, without Tauri. On Linux, [`watch_input`] gets the input of a
+//!   browser window from GTK. The automatic lock in the main window counts this input.
 //! - Browser-view accounts open in their own windows. Only the main window can call the commands
 //!   (`capabilities/main.json`). The account windows load sites of other parties. They can call only `page_notice`,
 //!   which has no arguments (`capabilities/account.json`).
@@ -20,6 +22,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod activity;
 mod github;
 mod session;
 mod telegram;
@@ -62,6 +65,54 @@ const TIMELINE_CHANGED: &str = "timeline-changed";
 
 /// The event that tells the main window that the messages of the open chat panel changed. It has no payload.
 const TELEGRAM_CHAT_CHANGED: &str = "telegram-chat-changed";
+
+/// The event that tells the main window that the person used a browser window. It has no payload. The main window
+/// then resets the time of the automatic lock.
+const INPUT_ELSEWHERE: &str = "input-elsewhere";
+
+/// The limit of the event `input-elsewhere`. All the browser windows use the same limit.
+static INPUT_THROTTLE: Mutex<activity::Throttle> = Mutex::new(activity::Throttle::new());
+
+/// Tells the main window about the input of the person in a browser window, no more than one time in
+/// [`activity::GAP`]. Only Linux uses it until milestone 12.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn input_elsewhere(app: &AppHandle) {
+    let send = INPUT_THROTTLE
+        .lock()
+        .map(|mut throttle| throttle.input(Instant::now()))
+        .unwrap_or(false);
+    if send {
+        let _ = app.emit_to("main", INPUT_ELSEWHERE, ());
+    }
+}
+
+/// Gets the input of the person in a browser window from GTK, for the automatic lock.
+///
+/// The handler connects to the signal `event` of the WebKit view. GTK sends each event of the view to this signal
+/// before WebKit gets it. The handler counts only key presses, button presses and scroll events, and it does not stop
+/// the event. The script of a page cannot make a GTK event. Thus, a page cannot stop the automatic lock.
+#[cfg(target_os = "linux")]
+fn watch_input(window: &WebviewWindow) {
+    use gtk::prelude::WidgetExt;
+
+    let app = window.app_handle().clone();
+    let _ = window.with_webview(move |webview| {
+        webview.inner().connect_event(move |_, event| {
+            use gtk::gdk::EventType;
+            if matches!(
+                event.event_type(),
+                EventType::KeyPress | EventType::ButtonPress | EventType::Scroll
+            ) {
+                input_elsewhere(&app);
+            }
+            gtk::glib::Propagation::Proceed
+        });
+    });
+}
+
+/// On other systems, the browser windows do not reset the automatic lock yet. Milestone 12 does this for macOS.
+#[cfg(not(target_os = "linux"))]
+fn watch_input(_window: &WebviewWindow) {}
 
 /// The Telegram connector of the app: the runtime with the receive loop, and PANIM's values from the build.
 struct Telegram {
@@ -391,11 +442,12 @@ fn open_account(app: AppHandle, session: Shared, id: u64) -> AppResult<()> {
         })?;
         builder = builder.proxy_url(proxy);
     }
-    builder.build().map_err(|e| AppError {
+    let window = builder.build().map_err(|e| AppError {
         code: "io",
         tries_left: None,
         detail: e.to_string(),
     })?;
+    watch_input(&window);
     Ok(())
 }
 
@@ -422,7 +474,8 @@ fn open_profile_window(
         let proxy = url::Url::parse(&proxy.url()).map_err(|e| AppError::new("bad_proxy", e))?;
         builder = builder.proxy_url(proxy);
     }
-    builder.build().map_err(|e| AppError::new("io", e))?;
+    let window = builder.build().map_err(|e| AppError::new("io", e))?;
+    watch_input(&window);
     Ok(())
 }
 

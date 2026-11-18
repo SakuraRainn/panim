@@ -9,6 +9,7 @@
   import {
     api,
     errorText,
+    INPUT_ELSEWHERE,
     TIMELINE_CHANGED,
     UNREAD_CHANGED,
     type Account,
@@ -57,13 +58,24 @@
     return item.chat.outgoing ? `${t("you")}: ${text}` : text;
   }
 
+  // The number of the latest call of load(). A slow older call must not replace the answer of a newer call.
+  let loadSeq = 0;
+
   async function load() {
+    const seq = ++loadSeq;
     try {
-      accounts = await api.accounts();
+      const nextAccounts = await api.accounts();
+      if (seq !== loadSeq) return;
+      accounts = nextAccounts;
       if (accountFilter !== null && !accounts.some((a) => a.id === accountFilter)) accountFilter = null;
-      items = await api.timeline(accountFilter, unreadOnly);
-      sync = await api.syncState();
+      const nextItems = await api.timeline(accountFilter, unreadOnly);
+      if (seq !== loadSeq) return;
+      items = nextItems;
+      const nextSync = await api.syncState();
+      if (seq !== loadSeq) return;
+      sync = nextSync;
     } catch (e) {
+      if (seq !== loadSeq) return;
       notice = errorText(e);
     }
   }
@@ -241,7 +253,8 @@
     onchange();
   }
 
-  // The automatic lock: input in the main window resets the time.
+  // The automatic lock: input in the main window resets the time. The Rust side gets the input of the browser
+  // windows from GTK, and it sends the event `input-elsewhere`. This event also resets the time.
   $effect(() => {
     const minutes = status.settings.auto_lock_minutes;
     if (!minutes) return;
@@ -252,7 +265,17 @@
     };
     const events = ["pointerdown", "pointermove", "keydown", "wheel"] as const;
     events.forEach((name) => window.addEventListener(name, reset, { passive: true }));
+    let stop: (() => void) | null = null;
+    let gone = false;
+    listen(INPUT_ELSEWHERE, reset)
+      .then((unlisten) => {
+        if (gone) unlisten();
+        else stop = unlisten;
+      })
+      .catch(() => {});
     return () => {
+      gone = true;
+      stop?.();
       clearTimeout(timer);
       events.forEach((name) => window.removeEventListener(name, reset));
     };

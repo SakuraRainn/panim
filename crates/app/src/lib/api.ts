@@ -194,6 +194,12 @@ export const TIMELINE_CHANGED = "timeline-changed";
 /** The Rust side sends this event when the messages of the open chat panel change. */
 export const TELEGRAM_CHAT_CHANGED = "telegram-chat-changed";
 
+/**
+ * The Rust side sends this event when the person used a browser window. It comes no more than one time in 10
+ * seconds. The main window then resets the time of the automatic lock.
+ */
+export const INPUT_ELSEWHERE = "input-elsewhere";
+
 /** The proof state of one account. */
 export interface ProofView {
   account: number;
