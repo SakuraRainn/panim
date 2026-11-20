@@ -18,6 +18,6 @@ pub use key::{Domain, KeyError, PersonaKey, PersonaSignature, VerifyError};
 pub use persona::{NewPersona, Persona, ProxyEndpoint, ProxyKind, Route};
 pub use proof::{Block, Date, KeptProof, ProofError, Statement};
 pub use secret::{MemorySecrets, SecretBytes, SecretRef, SecretStore, SecretTable};
-pub use store::{Error, MemoryStore, Result, Store, StoreMeta, check_new_account};
+pub use store::{Error, ItemChanges, MemoryStore, Result, Store, StoreMeta, check_new_account};
 pub use timeline::{ItemKey, NewItem, TimelineFilter, TimelineItem, Timestamp};
 pub use words::RecoveryWords;

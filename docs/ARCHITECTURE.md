@@ -37,7 +37,13 @@ This document tells how we build PANIM. It shows the current agreement. `DESIGN.
 ## 2a. The app (milestone 3)
 
 - `crates/app/src-tauri/src/session.rs` holds the state of the app: the first start, the gate, the recovery, the accounts, the settings and the browser profile. It has no Tauri code, so the tests examine it without a window.
-- `crates/app/src-tauri/src/main.rs` gives the session to the user interface as Tauri commands. Slow commands (Argon2id, scrypt) are `async`, so the window does not stop.
+- `crates/app/src-tauri/src/main.rs` gives the session to the user interface as Tauri commands.
+  - Tauri runs a command that is not `async` on the main thread. The main thread draws all the windows.
+  - Each command that locks the session is `async` and runs on a blocking thread. Thus, the main thread does not wait for the lock of the session, and the windows do not stop during a seal or Argon2id.
+  - A command that opens a window gets its data from the session and releases the lock. Then it makes the window. After the build, it makes sure that the vault is still open. If not, it closes the window.
+  - The changes of the unread state from the windows (the title, the focus, the close and `page_notice`) go into one queue. One thread does them in their order. It examines the focus of a window before it locks the session.
+  - Async commands can give their answers in a different order. The user interface ignores an answer that is not from its latest call. The settings page keeps its own copy of the settings.
+  - Only the exit of the app locks the session on the main thread, because the exit must wait for the last seal.
 - The app has an app ACL manifest (`build.rs`). Thus, Tauri examines each command against the capabilities, also for the main window. Add each new command to the list in `build.rs` and to a capability.
 - The main window can call all commands except `page_notice` (`capabilities/main.json`). This capability has no remote URLs.
 - The windows of browser-view accounts load sites of other parties. They can call only one command, `page_notice`, from an `https` page (`capabilities/account.json`). This command has no arguments. The app finds the account from the label of the window, not from data of the page. The account windows get no core permissions.
@@ -57,7 +63,7 @@ This document tells how we build PANIM. It shows the current agreement. `DESIGN.
 - The proof commands are in §6a. Only the main window can call them. The page `https://gist.github.com/` opens in a profile window with the label `profile-gist`.
 - The unread state is in `crates/app/src-tauri/src/unread.rs`, without Tauri. When the state changes, the app sends the event `unread-changed` to the main window. The main window then calls the command `unread`.
 - A browser window uses the profile folder of the persona, the route of the persona and a current Safari user agent.
-- The app seals the open browser profile every five minutes. When the main window closes, or when the person locks the app, the app closes the browser windows and seals the profile.
+- The app seals the open browser profile every five minutes, if a file changed after the last seal (§5). When the main window closes, or when the person locks the app, the app closes the browser windows and seals the profile.
 - The settings that the gate needs (the language and the time for the automatic lock) are in `settings.json` in the data folder. They are not secret.
 - The automatic lock counts the input in all the windows:
   - Key, pointer and wheel events in the main window reset the time of the lock (`Main.svelte`).
@@ -287,7 +293,7 @@ Each connector polls the platform or listens to it. It writes timeline items to 
 - **Storage.** The TDLib folder of each account is in the profile area in memory (`$XDG_RUNTIME_DIR`, §5). The vault keeps it as one sealed archive, with the code of the browser profile (`panim-vault/src/profile.rs`).
   - The folder has a random name (`telegram-` and 16 hexadecimal digits). The secret of the account has the database key and then the name of the folder. Thus, the stored structs of the vault do not change.
   - The archive does not keep `files/`. With the databases off, TDLib downloads nothing that PANIM needs.
-  - PANIM seals the folder when the login is complete, before it adds the account. It also seals the folders every five minutes, with the browser profile, and at a lock or an exit.
+  - PANIM seals the folder when the login is complete, before it adds the account. It also seals the folders every five minutes, with the browser profile, if a file changed (§5). It always seals them at a lock or an exit.
   - At a lock or an exit, PANIM sends `close` to each client and waits for `authorizationStateClosed` (5 seconds for all the clients). Then it seals the folders and removes them from memory. At the unlock, PANIM opens the folders and starts new clients.
   - A vault from before milestone 7 has no Telegram data, and it opens as before. A test makes sure that the app adds no file to a vault without a Telegram account.
 - **Chats to items.** The client keeps a small model of the chats in memory. It reads `updateNewChat`, `updateChatLastMessage`, `updateChatPosition`, `updateChatReadInbox`, `updateChatIsMarkedAsUnread`, `updateChatNotificationSettings`, `updateScopeNotificationSettings`, `updateChatTitle`, `updateChatDraftMessage`, `updateChatPermissions`, `updateUser`, `updateSupergroup` and `updateBasicGroup`.
@@ -344,7 +350,13 @@ Each connector polls the platform or listens to it. It writes timeline items to 
 - PANIM seals the profile folders with the master key (§3):
   - When the app opens, it unseals each profile into memory. On Linux, this is `$XDG_RUNTIME_DIR`, which is not on the disk.
   - Each vault has its own folder there (`$XDG_RUNTIME_DIR/panim/<16 hexadecimal digits>`). The name comes from the master key. Thus, two copies of the app with different data folders keep their open profiles apart.
-  - The app seals the profile again when it closes, and also every few minutes. Thus, a crash loses only a few minutes of browser state.
+  - The app seals the profile again when it closes, and also every five minutes. Thus, a crash loses only a few minutes of browser state.
+  - The periodic seal occurs only if a file changed. PANIM compares the path, the size and the modification time of each file with the last seal. The `-shm` file of a SQLite database is not in this comparison.
+  - Before Linux 6.13, the times of the files in tmpfs are not exact. Thus, if a file changed in the last two seconds, the next periodic seal always occurs.
+  - The seal at a lock, at an exit and at a backup always occurs.
+  - The seal makes a copy of each SQLite database with the backup interface of SQLite (`rusqlite`, with the SQLite of the system). The copy is one state of the database. The archive holds the copy without its `-wal`, `-shm` and `-journal` files. If the copy fails, the seal copies the files as before.
+  - A database in WAL mode without a `-wal` file is closed. The seal copies it as a usual file.
+  - `DISCUSSION.md` §46 to §49 give the reasons and the known limits.
 - PANIM does not read the content of the page.
 - The unread count comes from the title of the page. The Rust side reads the title when it changes. It keeps only the count, not the title:
   - `(N)` at the start of the title gives the count N, for example on X and Proton Mail.

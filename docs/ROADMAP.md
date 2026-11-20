@@ -22,10 +22,10 @@ The work is on the branch `main`. Until 2026-11-18, its name was `step-1` (`DISC
 | 12 | macOS: the app, the browser profiles, TDLib and the package on macOS | Not started. Release 0.2.0 (§10). This is a large milestone | A Mac for the tests. An Apple Developer account for the signature of the app (optional) |
 | 13 | Bluesky: the timeline, the notifications, posts and answers, the direct messages. Proof format version 2 and the automatic check of a proof post | Not started. Release 0.3.0 (§11) | — |
 | 14 | Email services through IMAP/SMTP: mail in the timeline, mail out, IMAP IDLE. Check 3: IMAP/SMTP through the proxy | Not started. Release 0.3.0 (§11) | — |
-| 15 | Six repairs: the automatic lock in all the windows, stronger passcode settings, no change in memory after a failed write, limits for a key file, the unread GitHub notifications, the order of the timeline answers | The six repairs are complete. Release 0.1.2 (§8) waits for the hand checks | — |
-| 16 | The seal of the open folders: no freeze of the window, no seal when nothing changed, a correct copy of the SQLite files | Not started. Release 0.1.3 (§9) | — |
+| 15 | Six repairs: the automatic lock in all the windows, stronger passcode settings, no change in memory after a failed write, limits for a key file, the unread GitHub notifications, the order of the timeline answers | Complete. Release 0.1.2 is public (2026-11-18, §8) | — |
+| 16 | The seal of the open folders: no freeze of the window, fewer Telegram writes, no seal when nothing changed, a correct copy of the SQLite files | Not started. Release 0.1.3 (§9) | — |
 
-Release 0.1.0 has GitHub and Telegram in the shared timeline, and X, Discord and Proton Mail in browser views. Release 0.1.1 has milestone 11. Release 0.1.2 has milestone 15 (`DISCUSSION.md` §44, §45). Release 0.1.3 has milestone 16 (`DISCUSSION.md` §45). Release 0.2.0 has milestone 12 (`DISCUSSION.md` §33, §34). Release 0.3.0 has milestones 13 and 14 (`DISCUSSION.md` §42). Milestones 8 and 9 come later.
+Release 0.1.0 has GitHub and Telegram in the shared timeline, and X, Discord and Proton Mail in browser views. Release 0.1.1 has milestone 11. Release 0.1.2 has milestone 15 (`DISCUSSION.md` §44, §45). Release 0.1.3 has milestone 16 (`DISCUSSION.md` §45, §46). Release 0.2.0 has milestone 12 (`DISCUSSION.md` §33, §34). Release 0.3.0 has milestones 13 and 14 (`DISCUSSION.md` §42). Milestones 8 and 9 come later.
 
 ## 2. Milestone 4 in detail
 
@@ -300,27 +300,72 @@ The results of the hand checks on 2026-11-18:
 - **Not done:** the filter check of repair 6. The person could not make the problem occur. The commands `accounts`, `timeline` and `sync_state` are not async, so Tauri runs them on the main thread in their order. Thus, a newer call always gets the last answer, and the problem cannot occur today. Repair 1 of milestone 16 can make these commands async. Then the problem can occur, so milestone 16 does this hand check.
 - The automatic tests passed on `main` (2026-11-18).
 
+**Complete (2026-11-18).** The release steps:
+
+1. `main` got the tag `v0.1.2` (commit `7d708f8`). The tag is also in `SakuraRainn/panim-dev`.
+2. The AppImage was built from the tag with the values of PANIM. The person signed `SHA256SUMS` with the key `7B5C5C4A551F160B`.
+3. `nix run .#publish` made the public commit `05f3d92` on top of the commit of 0.1.1. The script examined the commit, and the person pushed it with the tag `v0.1.2`.
+4. The release v0.1.2 of `SakuraRainn/panim` has the AppImage, the source archive, `SHA256SUMS` and `SHA256SUMS.minisig`.
+5. The public commit also has the draft `base/panim-proof-v2.md` and the plan of release 0.3.0. The draft tells that it is not published.
+6. The `CHANGELOG.md` of the tag tells that repair 6 stops a problem that a person can see. This is not correct, because the problem cannot occur in release 0.1.2. The release notes on GitHub and the `CHANGELOG.md` of `main` have the correct text.
+
 ## 9. Release 0.1.3
 
-Release 0.1.3 has milestone 16 (`DISCUSSION.md` §45). It has no new feature. It changes how PANIM seals the open folders.
+Release 0.1.3 has milestone 16 (`DISCUSSION.md` §45, §46). It has no new feature. It changes how PANIM seals the open folders, and which thread waits for the lock of the session.
 
 ### Milestone 16: the seal of the open folders
 
-1. **No freeze of the window.**
-   - Every five minutes, a thread locks the session and seals the browser profile and the TDLib folders. The window waits for the same lock, so it stops during the seal.
-   - Make the archive and write it outside the lock of the session. Make sure that two seals of one folder cannot occur at the same time, and that the lock of the vault waits for a seal.
-   - Argon2id and scrypt also run under the lock (unlock, recovery, a change of the passcode). Move them outside the lock, or make these commands async.
-2. **No seal when nothing changed.** Compare the paths, sizes and modification times with the last seal. If they are the same, do not seal.
-3. **A correct copy of the SQLite files.**
-   - WebKit and TDLib write SQLite files while the folder is open. The seal copies the file and its WAL file at different times, so the copy can be damaged.
-   - The seal at the lock and at the close is correct, because the windows close first. The problem is the periodic seal, which PANIM restores after a crash.
-   - Examine the files of WebKit and TDLib. Then select a solution, for example the backup interface of SQLite. Record the choice in `DISCUSSION.md`.
-   - Test: stop PANIM with an open window during a seal. Start it again. The logins are there.
-4. **Less memory.** Today, the seal keeps the archive and its sealed copy in memory together. Examine a stream into the cipher. This part is optional.
-5. **Fewer events from Telegram.**
-   - Each Telegram update writes the items file of the account three times, and it always sends `timeline-changed`. Then the main window makes three calls.
-   - Write the file one time for each update. Send the event only when the timeline changed.
-6. Version 0.1.3, `CHANGELOG.md`, the hand checks and the release, as for release 0.1.2. The hand checks include the filter check of milestone 15, repair 6 (§8).
+The examination of the code and of the open folders (2026-11-18) gave these results (`DISCUSSION.md` §46):
+
+- **The cause of the freeze.** The commands with a passcode are already async. But the commands `status`, `accounts`, `timeline`, `unread`, `page_notice` and `sync_state` are not async, so Tauri runs them on the main thread. The title handler of an account window also runs on the main thread. They all wait for the lock of the session. During the periodic seal or Argon2id, the main thread waits, and the windows stop.
+- **The browser profile.** The files of local storage and of the service workers are SQLite files in WAL mode. `hsts-storage.sqlite` is a SQLite file with a rollback journal. IndexedDB, when a site uses it, also has SQLite files in WAL mode. `cookies` is a text file, not a SQLite file.
+- **The TDLib folder.** The folder `db` has only `td.binlog`, because PANIM sets the three databases of TDLib to false. TDLib adds entries to the end of the binlog, and each entry has a checksum. When TDLib writes the binlog again, it writes a new file and renames it. Thus, a copy during a write loses no more than the last entry.
+
+The work has four parts. Each part has its own subagent, worktree and branch (`AGENTS.md` §7). Parts A and D can occur at the same time. Part B starts after part A. Part C starts after part B, because parts B and C change the same code.
+
+1. **Part A: the main thread does not wait for the lock of the session.**
+   - Make the commands `status`, `accounts`, `timeline`, `unread`, `page_notice` and `sync_state` async. They do their work with `blocking`, as the other async commands do. Examine the other commands that are not async, and move each one that locks the session.
+   - The title handler of an account window does not lock the session on the main thread. It sends the title to a thread, and that thread changes the session.
+   - Then the main thread never waits for the lock. During a seal or Argon2id, a list in the window can show its data later, but the window does not stop.
+   - Thus, the move of Argon2id and scrypt outside the lock is not necessary.
+   - Async commands can give their answers in a different order. The number of each `load()` call (milestone 15, repair 6) then becomes necessary. Do the filter check of repair 6 in the hand checks.
+   - Tests: the tests of `Session` stay the same. Run `pnpm check`.
+2. **Part D: fewer writes and events from Telegram.**
+   - Today, each Telegram update writes the items file of the account three times, and it always sends `timeline-changed`. Then the main window makes three calls.
+   - Add one method of the store that adds items, marks items as read and removes items in one write. It tells if the items changed.
+   - Send `timeline-changed` only when the items changed.
+   - Tests: an update with no change writes no file and sends no event. An update with all three changes writes the file one time. After a failed write, the data in memory is the same as before (milestone 15, repair 3).
+3. **Part B: no seal when nothing changed, and a slow seal for the hand checks.** Parts A and D are complete (2026-11-18). Parts B and C are complete (2026-11-19). The seal stays under the lock of the session (`DISCUSSION.md` §47).
+   - Before a periodic seal of a browser profile or a TDLib folder, compare the paths, sizes and modification times of the files with the last seal. If they are the same, do not seal.
+   - The seal at the lock of the vault, at the backup and at the stop of Telegram always occurs.
+   - A test setting `PANIM_TEST_SLOW` makes each seal and each unlock wait for the given number of seconds under the lock of the session. It also makes the commands `timeline`, `accounts` and `sync_state` wait. Only a debug build has this setting. A release build does not compile it.
+   - Tests: a seal with no change writes no file. A change to one file makes a seal. A new file and a removed file make a seal.
+4. **Part C: a correct copy of the SQLite files of WebKit.**
+   - The seal reads the first 16 bytes of each file. For a SQLite file, it makes a copy with the backup interface of SQLite, through the crate `rusqlite` with the SQLite of the system (`DISCUSSION.md` §48). The copy stays in memory. The archive holds the copy. It does not hold the `-wal`, `-shm` or `-journal` file of that database.
+   - The seal copies the other files as before, for example `cookies` and `td.binlog`.
+   - If the backup of a database fails, the seal copies the file as before and logs the failure. One bad database must not stop the seal of the profile.
+   - The format of the archive does not change. An archive from release 0.1.2 opens with release 0.1.3.
+   - Tests: a test profile has a SQLite database in WAL mode. A second thread writes to it during the seal. Open the archive, and run `PRAGMA integrity_check` on the copy. The copy has all the rows of a complete write.
+5. **Not in release 0.1.3:** a stream into the cipher. It needs a new format of the sealed file, with the data in parts. A change of the format is not for a patch release. Record it for a later release.
+6. **Then:**
+   1. Change `ARCHITECTURE.md` (the seal of the open folders, the threads of the commands) and §12 of this document.
+   2. Version 0.1.3 and `CHANGELOG.md`.
+   3. Hand checks:
+      - Start a debug build with `PANIM_TEST_SLOW=10`. Unlock, and move a browser window during the unlock. The windows do not stop.
+      - In the same build, use an X window during a periodic seal. The window does not stop.
+      - In the same build, do the filter check of milestone 15, repair 6 (§8).
+      - Stop PANIM with an open X window, a short time after a periodic seal. Start it again. The login and the local storage of X are there.
+      - A vault from release 0.1.2 opens with release 0.1.3, and the accounts, the timeline and the Telegram sessions are there.
+   4. The release, as for release 0.1.2 (§8).
+
+The hand check of parts A to D (2026-11-19): the person started a debug build with `PANIM_TEST_SLOW=10`. The window did not stop during the unlock and during a periodic seal. The filter check of milestone 15, repair 6 passed. The logins and Telegram were there after a lock. A review by a second agent examines parts A to D.
+
+The review found seven problems. Five repairs are in `main`, and `DISCUSSION.md` §49 records the other limits (2026-11-19). `ARCHITECTURE.md`, the version 0.1.3 and `CHANGELOG.md` are complete. The results of the last hand checks on 2026-11-19, all passed:
+
+- Two fast changes of the settings stayed.
+- The notice of a page went away when the window got the focus, and no notice stayed after the window closed.
+- PANIM stopped with `pkill -9` after a periodic seal. After a new start, the login to X was there.
+- The vault of release 0.1.2 opened, and the accounts, the timeline and the Telegram sessions were there.
 
 ## 10. Release 0.2.0
 

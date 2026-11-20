@@ -10,12 +10,18 @@
   let status = $state<Status | null>(null);
   let failure = $state("");
 
+  // The number of the latest call of refresh(). A slow older call must not replace the answer of a newer call.
+  let refreshSeq = 0;
+
   async function refresh() {
+    const seq = ++refreshSeq;
     try {
-      status = await api.status();
-      lang.current = status.settings.language;
+      const next = await api.status();
+      if (seq !== refreshSeq) return;
+      status = next;
+      lang.current = next.settings.language;
     } catch (e) {
-      failure = errorText(e);
+      if (seq === refreshSeq) failure = errorText(e);
     }
   }
 

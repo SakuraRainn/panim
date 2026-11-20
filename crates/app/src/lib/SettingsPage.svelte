@@ -45,15 +45,45 @@
   }
   let copied = $state(false);
 
+  // The Rust side can do two calls of setSettings in a different order (milestone 16). Thus, each call waits for
+  // the previous call, and the last choice of the person stays.
+  let settingsQueue: Promise<unknown> = Promise.resolve();
+
+  // The local copy of the settings. A click changes it at once. `status` changes only after `onchange()`, so a
+  // second click before that time must not use the old `status.settings` (milestone 16, review).
+  let settings = $state<Status["settings"]>({ ...untrack(() => status.settings) });
+  // The number of saves that are not complete. This value is not reactive.
+  let pending = 0;
+
+  // A new status replaces the local copy only when no save is in work.
+  $effect(() => {
+    const fresh = status.settings;
+    if (pending === 0) settings = { ...fresh };
+  });
+
+  async function saveSettings(change: Partial<Status["settings"]>) {
+    settings = { ...settings, ...change };
+    const copy = { ...settings };
+    pending++;
+    const next = settingsQueue.then(() => api.setSettings(copy));
+    settingsQueue = next.catch(() => {});
+    try {
+      await next;
+    } finally {
+      pending--;
+      // Only the last save gets a new status, so that an old status cannot come after it. After a save that
+      // failed, the new status puts back the saved settings.
+      if (pending === 0) onchange();
+    }
+  }
+
   async function setLanguage(code: "en" | "zh") {
     lang.current = code;
-    await api.setSettings({ ...status.settings, language: code });
-    onchange();
+    await saveSettings({ language: code });
   }
 
   async function setLock(minutes: number) {
-    await api.setSettings({ ...status.settings, auto_lock_minutes: minutes });
-    onchange();
+    await saveSettings({ auto_lock_minutes: minutes });
   }
 
   async function applyRoute() {
@@ -92,11 +122,21 @@
     tgOwn = app.use_own || !app.builtin;
   }
 
-  api.telegramApp().then(showApp, (e) => (tgError = errorText(e)));
+  // A change of the values starts a new number. Then the first answer of telegramApp() cannot replace the answer of
+  // the change, if it comes later (milestone 16).
+  let tgSeq = 0;
+  {
+    const seq = tgSeq;
+    api.telegramApp().then(
+      (app) => seq === tgSeq && showApp(app),
+      (e) => seq === tgSeq && (tgError = errorText(e)),
+    );
+  }
 
   const typedValues = $derived(apiId.trim() !== "" || apiHash.trim() !== "");
 
   async function saveTelegramApp() {
+    tgSeq++;
     tgNote = tgError = "";
     if (typedValues) {
       if (!/^\d{1,10}$/.test(apiId.trim())) return (tgError = t("tg_values_bad_id"));
@@ -112,6 +152,7 @@
   }
 
   async function forgetTelegramApp() {
+    tgSeq++;
     tgNote = tgError = "";
     try {
       showApp(await api.forgetTelegramApp());
@@ -178,7 +219,7 @@
     <h3>{t("settings_autolock")}</h3>
     <div class="row wrap">
       {#each lockChoices as m (m)}
-        <button class:on={status.settings.auto_lock_minutes === m} onclick={() => setLock(m)}>
+        <button class:on={settings.auto_lock_minutes === m} onclick={() => setLock(m)}>
           {m === 0 ? t("autolock_never") : t("minutes", { n: m })}
         </button>
       {/each}

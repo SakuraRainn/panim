@@ -42,6 +42,33 @@ use serde::{Deserialize, Serialize};
 
 use crate::unread::{Unread, UnreadTable};
 
+/// A test setting for the hand checks: `PANIM_TEST_SLOW` is a number of seconds. Each seal, each unlock and the
+/// commands `timeline`, `accounts` and `sync_state` wait for that time while they hold the lock of the session.
+///
+/// Only a debug build has this setting. A release build does not compile it.
+#[cfg(debug_assertions)]
+pub fn test_slow() {
+    static SLOW: std::sync::OnceLock<Option<Duration>> = std::sync::OnceLock::new();
+    let slow = SLOW.get_or_init(|| {
+        let seconds = std::env::var("PANIM_TEST_SLOW").ok()?.trim().parse().ok()?;
+        Some(Duration::from_secs(seconds))
+    });
+    if let Some(slow) = slow {
+        std::thread::sleep(*slow);
+    }
+}
+
+/// The type of a seal of the browser profile.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Seal {
+    /// The seal at the interval. It does not occur if no file changed after the last seal.
+    Periodic,
+    /// A seal that always occurs. The folder stays open.
+    Always,
+    /// A seal that always occurs. Then the open folder is removed.
+    Close,
+}
+
 /// The place in the vault for the state of the app.
 const APP_STATE: &str = "app/state";
 /// The name of the one persona of step 1. The user interface does not show it.
@@ -593,6 +620,8 @@ impl Session {
     /// Opens the vault with the passcode.
     pub fn unlock(&mut self, passcode: &str) -> AppResult<()> {
         let vault = Arc::new(Vault::open(&self.data, passcode, self.strength.kdf)?);
+        #[cfg(debug_assertions)]
+        test_slow();
         self.load(vault)
     }
 
@@ -689,7 +718,7 @@ impl Session {
     /// Telegram clients before this.
     pub fn lock(&mut self) -> AppResult<()> {
         let telegram = self.telegram_close();
-        let result = self.seal_profile(true).and(telegram);
+        let result = self.seal_profile(Seal::Close).and(telegram);
         self.open = None;
         self.unread.clear();
         // The device code, the cursors and the sync state do not stay after a lock.
@@ -711,7 +740,7 @@ impl Session {
     pub fn backup(&mut self, target: &Path) -> AppResult<BackupInfo> {
         self.open_ref()?;
         let telegram = self.telegram_close();
-        self.seal_profile(false).and(telegram)?;
+        self.seal_profile(Seal::Always).and(telegram)?;
         let open = self.open_ref()?;
         Ok(panim_vault::write_backup(&open.vault, target)?)
     }
@@ -1062,6 +1091,13 @@ impl Session {
             .clone()
             .ok_or_else(|| AppError::new("io", "the browser profile is not open"))?;
         Ok((profile, open.persona.route.clone()))
+    }
+
+    /// Tells if the vault is open and `profile` is its open browser profile folder.
+    ///
+    /// A new browser window uses it after the build: the lock can occur between `profile_target` and the build.
+    pub fn profile_is_open(&self, profile: &Path) -> bool {
+        self.open.as_ref().and_then(|open| open.profile.as_deref()) == Some(profile)
     }
 
     /// Keeps a new device login in memory. A login that was in work stops.
@@ -1531,18 +1567,24 @@ impl Session {
         self.open.as_ref().is_some_and(|open| open.store.account(id).is_some())
     }
 
-    /// Seals the open browser profile into the vault. The app calls this every few minutes.
-    pub fn seal_profile(&mut self, close: bool) -> AppResult<()> {
+    /// Seals the open browser profile into the vault. The app calls this every few minutes with `Seal::Periodic`.
+    pub fn seal_profile(&mut self, seal: Seal) -> AppResult<()> {
         let Some(open) = self.open.as_mut() else { return Ok(()) };
         if open.profile.is_none() {
             return Ok(());
         }
+        #[cfg(debug_assertions)]
+        test_slow();
         let folder = open.persona.profile_folder();
-        if close {
-            open.profile = None;
-            self.area.close(&open.vault, &folder)?;
-        } else {
-            self.area.seal(&open.vault, &folder)?;
+        match seal {
+            Seal::Periodic => {
+                self.area.seal_changed(&open.vault, &folder)?;
+            }
+            Seal::Always => self.area.seal(&open.vault, &folder)?,
+            Seal::Close => {
+                open.profile = None;
+                self.area.close(&open.vault, &folder)?;
+            }
         }
         Ok(())
     }
@@ -1721,6 +1763,21 @@ fn persona_key(open: &Open) -> AppResult<PersonaKey> {
 pub(crate) mod tests {
     use super::*;
 
+    /// Sets the modification time of all the files in a folder to one minute before now. The fingerprint of the
+    /// periodic seal keeps only files that are older than a few seconds, so that the test does not wait.
+    pub(crate) fn age(root: &Path) {
+        for entry in fs::read_dir(root).unwrap() {
+            let entry = entry.unwrap();
+            if entry.file_type().unwrap().is_dir() {
+                age(&entry.path());
+            } else {
+                let file = fs::File::options().write(true).open(entry.path()).unwrap();
+                file.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(60))
+                    .unwrap();
+            }
+        }
+    }
+
     struct Fixture {
         _dirs: (tempfile::TempDir, tempfile::TempDir),
         data: PathBuf,
@@ -1741,6 +1798,52 @@ pub(crate) mod tests {
         fn session(&self) -> Session {
             Session::new(self.data.clone(), ProfileArea::at(self.memory.clone()), Strength::TEST)
         }
+    }
+
+    #[test]
+    fn the_profile_is_open_only_while_the_vault_is_open() {
+        let f = Fixture::new();
+        let mut session = f.session();
+        assert!(!session.profile_is_open(Path::new("/x")));
+        session.create("passcode1").unwrap();
+        let (profile, _) = session.profile_target().unwrap();
+        assert!(session.profile_is_open(&profile));
+        assert!(!session.profile_is_open(&profile.join("other")));
+        session.lock().unwrap();
+        assert!(!session.profile_is_open(&profile));
+        assert_eq!(session.profile_target().unwrap_err().code, "locked");
+    }
+
+    /// The periodic seal of the browser profile does not occur when no file changed. The other seals always occur.
+    #[test]
+    fn the_periodic_seal_of_the_profile_skips_an_unchanged_profile() {
+        let f = Fixture::new();
+        let mut session = f.session();
+        session.create("passcode1").unwrap();
+        let profile = session.open.as_ref().unwrap().profile.clone().unwrap();
+        fs::write(profile.join("cookies"), "session=alice").unwrap();
+        age(&profile);
+        let disk = || {
+            let mut files = BTreeMap::new();
+            for entry in fs::read_dir(f.data.join("data")).unwrap() {
+                let entry = entry.unwrap();
+                files.insert(entry.file_name(), fs::read(entry.path()).unwrap());
+            }
+            files
+        };
+        session.seal_profile(Seal::Periodic).unwrap();
+        let first = disk();
+        session.seal_profile(Seal::Periodic).unwrap();
+        assert_eq!(disk(), first, "no change, no write");
+        session.seal_profile(Seal::Always).unwrap();
+        let second = disk();
+        assert_ne!(second, first, "a seal for the backup always occurs");
+        fs::write(profile.join("cookies"), "session=alice, bob").unwrap();
+        session.seal_profile(Seal::Periodic).unwrap();
+        let third = disk();
+        assert_ne!(third, second);
+        session.lock().unwrap();
+        assert_ne!(disk(), third, "the lock always seals");
     }
 
     #[test]

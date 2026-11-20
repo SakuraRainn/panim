@@ -18,7 +18,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use panim_core::{
-    Account, AccountId, JoinedAccess, NewAccount, Platform, Route, SecretBytes, SecretStore, Store, TimelineFilter,
+    Account, AccountId, ItemChanges, JoinedAccess, NewAccount, Platform, Route, SecretBytes, SecretStore, Store,
+    TimelineFilter,
 };
 use panim_telegram::{AppConfig, AuthState, CHAT_PREFIX, ChatItem, Connection, KEY_BYTES, Me, source_id};
 use panim_vault::Vault;
@@ -376,15 +377,20 @@ impl Session {
         })
     }
 
-    /// Seals each open TDLib folder into the vault. The folders stay open. The app calls this every few minutes.
+    /// Seals each open TDLib folder into the vault, if a file of the folder changed after its last seal. The folders
+    /// stay open. The app calls this every few minutes.
     pub fn telegram_seal(&mut self) -> AppResult<()> {
         let Session { area, open, .. } = self;
         let Some(open) = open.as_ref() else { return Ok(()) };
+        #[cfg(debug_assertions)]
+        if !open.telegram.is_empty() {
+            super::test_slow();
+        }
         let mut result = Ok(());
         for folder in &open.telegram {
             // Try each folder. Keep the first error.
-            let sealed = area.seal_except(&open.vault, folder, NOT_SEALED);
-            result = result.and(sealed.map_err(AppError::from));
+            let sealed = area.seal_changed_except(&open.vault, folder, NOT_SEALED);
+            result = result.and(sealed.map(|_| ()).map_err(AppError::from));
         }
         result
     }
@@ -526,24 +532,21 @@ impl Session {
 
     /// Keeps the changes of the chat items of an account. Returns true if the timeline changed.
     ///
+    /// The unread count comes from the items, so it can change only when the timeline changed.
+    ///
     /// The read state of each item is the state that the connector gives. It does not come from the time of the item.
     pub fn telegram_items(&mut self, account: AccountId, upsert: &[ChatItem], remove: &[i64]) -> bool {
         if !self.is_telegram(account) {
             return false;
         }
         let Some(open) = self.open.as_mut() else { return false };
-        let mut changed = false;
-        if !upsert.is_empty() {
-            let items = upsert.iter().map(ChatItem::to_new_item).collect();
-            let reads: Vec<(String, bool)> = upsert.iter().map(|item| (source_id(item.chat_id), item.read)).collect();
-            changed |= open.store.put_items(account, items).is_ok();
-            changed |= open.store.set_read_many(account, &reads).is_ok_and(|count| count > 0);
-        }
-        if !remove.is_empty() {
-            let ids: Vec<String> = remove.iter().map(|chat| source_id(*chat)).collect();
-            changed |= open.store.remove_items(account, &ids).is_ok_and(|count| count > 0);
-        }
-        changed
+        let changes = ItemChanges {
+            put: upsert.iter().map(ChatItem::to_new_item).collect(),
+            read: upsert.iter().map(|item| (source_id(item.chat_id), item.read)).collect(),
+            remove: remove.iter().map(|chat| source_id(*chat)).collect(),
+        };
+        // One step writes the items file one time, and only if the items changed. A failed write changes nothing.
+        open.store.apply_items(account, changes).unwrap_or(false)
     }
 
     /// Records that the client has its chat list. With a complete list, the function removes the stored items of
@@ -690,6 +693,54 @@ mod tests {
         assert_eq!(Values::Builtin.resolve(Some(&own)), Some(own.clone()));
         assert_eq!(Values::Own(own.clone()).resolve(None), Some(own.clone()));
         assert_eq!(Values::Unknown.resolve(Some(&own)), None);
+    }
+
+    /// The periodic seal of a TDLib folder does not occur when no file changed. The close always seals.
+    #[test]
+    fn the_periodic_seal_of_a_tdlib_folder_skips_an_unchanged_folder() {
+        let (data, memory) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let mut session = Session::new(
+            data.path().join("panim"),
+            panim_vault::ProfileArea::at(memory.path().to_path_buf()),
+            super::super::Strength::TEST,
+        );
+        session.create("passcode1").unwrap();
+        let folder = "telegram-0123456789abcdef";
+        let dir = {
+            let Session { area, open, .. } = &mut session;
+            let open = open.as_mut().unwrap();
+            let dir = area.open(&open.vault, folder).unwrap();
+            open.telegram.insert(folder.into());
+            dir
+        };
+        std::fs::create_dir_all(dir.join("db")).unwrap();
+        std::fs::write(dir.join("db/td.binlog"), b"a login").unwrap();
+        crate::session::tests::age(&dir);
+        // The sealed files have a random nonce, so each write changes the bytes on the disk.
+        let disk = || {
+            let mut files = std::collections::BTreeMap::new();
+            for entry in std::fs::read_dir(data.path().join("panim/data")).unwrap() {
+                let entry = entry.unwrap();
+                files.insert(entry.file_name(), std::fs::read(entry.path()).unwrap());
+            }
+            files
+        };
+
+        session.telegram_seal().unwrap();
+        let first = disk();
+        session.telegram_seal().unwrap();
+        assert_eq!(disk(), first, "no change, no write");
+        std::fs::create_dir_all(dir.join("files")).unwrap();
+        std::fs::write(dir.join("files/photo.jpg"), b"picture").unwrap();
+        session.telegram_seal().unwrap();
+        assert_eq!(disk(), first, "the folder `files` is not sealed");
+
+        std::fs::write(dir.join("db/td.binlog"), b"a login and more").unwrap();
+        session.telegram_seal().unwrap();
+        let second = disk();
+        assert_ne!(second, first);
+        session.telegram_close().unwrap();
+        assert_ne!(disk(), second, "the close always seals");
     }
 
     /// A vault from milestone 7: a Telegram account whose secret is the key and the folder name, and no

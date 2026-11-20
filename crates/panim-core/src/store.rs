@@ -106,6 +106,30 @@ pub trait Store {
     /// A source identifier that the store does not have is not an error.
     fn set_read_many(&mut self, account: AccountId, changes: &[(String, bool)]) -> Result<usize>;
     fn unread_count(&self, account: AccountId) -> usize;
+    /// Does a set of changes to the items of one account in one step. Returns true if the items changed.
+    ///
+    /// The store does the changes in this sequence: `put` (as `put_items`), `read` (as `set_read_many`) and
+    /// `remove` (as `remove_items`). An item is changed only if its data after the step is different from its data
+    /// before the step. A sealed store writes the items file of the account one time, and only if the items changed.
+    fn apply_items(&mut self, account: AccountId, changes: ItemChanges) -> Result<bool>;
+}
+
+/// A set of changes to the items of one account, for `Store::apply_items`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ItemChanges {
+    /// The items to add or to replace.
+    pub put: Vec<NewItem>,
+    /// The new read state of some items, as source identifiers.
+    pub read: Vec<(String, bool)>,
+    /// The source identifiers of the items to remove.
+    pub remove: Vec<String>,
+}
+
+impl ItemChanges {
+    /// True if the set has no change.
+    pub fn is_empty(&self) -> bool {
+        self.put.is_empty() && self.read.is_empty() && self.remove.is_empty()
+    }
 }
 
 /// Makes sure that a new account obeys the rules of `docs/DESIGN.md` §4 and §5.
@@ -391,6 +415,34 @@ impl Store for MemoryStore {
             .values()
             .filter(|item| item.key.account == account && !item.read)
             .count()
+    }
+
+    fn apply_items(&mut self, account: AccountId, changes: ItemChanges) -> Result<bool> {
+        let owner = self.accounts.get(&account).ok_or(Error::UnknownAccount(account))?;
+        if !changes.put.is_empty() && owner.joined.is_none() {
+            return Err(Error::NotJoined(account));
+        }
+        // Keep a copy of each item that the changes can touch. After the changes, compare each item with its copy.
+        let ids = changes.put.iter().map(|item| &item.source_id);
+        let ids = ids.chain(changes.read.iter().map(|(id, _)| id)).chain(&changes.remove);
+        let mut before: BTreeMap<ItemKey, Option<TimelineItem>> = BTreeMap::new();
+        for source_id in ids {
+            let key = ItemKey {
+                account,
+                source_id: source_id.clone(),
+            };
+            let old = self.items.get(&key).cloned();
+            before.entry(key).or_insert(old);
+        }
+        // The checks above make sure that these steps cannot fail.
+        if !changes.put.is_empty() {
+            self.put_items(account, changes.put)?;
+        }
+        self.set_read_many(account, &changes.read)?;
+        self.remove_items(account, &changes.remove)?;
+        Ok(before
+            .into_iter()
+            .any(|(key, old)| self.items.get(&key) != old.as_ref()))
     }
 }
 
@@ -802,6 +854,47 @@ mod tests {
         assert_eq!(
             store.set_route(PersonaId(9), Route::Direct),
             Err(Error::UnknownPersona(PersonaId(9)))
+        );
+    }
+
+    #[test]
+    fn apply_items_tells_if_the_items_changed() {
+        let (mut store, me) = store_with_persona();
+        let account = store
+            .add_account(new_account(me, Platform::GitHub, true, false))
+            .unwrap()
+            .id;
+        store.put_items(account, vec![item("a", 1), item("b", 2)]).unwrap();
+        let changes = |put: Vec<NewItem>, read: &[(&str, bool)], remove: &[&str]| ItemChanges {
+            put,
+            read: read.iter().map(|(id, read)| (id.to_string(), *read)).collect(),
+            remove: remove.iter().map(|id| id.to_string()).collect(),
+        };
+
+        // The same data, a read state that is already set, and an unknown item are not changes.
+        let same = changes(vec![item("a", 1)], &[("a", false)], &["unknown"]);
+        assert_eq!(store.apply_items(account, same), Ok(false));
+        assert_eq!(store.apply_items(account, ItemChanges::default()), Ok(false));
+
+        // A put, a read and a removal in one step.
+        let all = changes(vec![item("c", 3)], &[("a", true)], &["b"]);
+        assert_eq!(store.apply_items(account, all), Ok(true));
+        let ids: Vec<_> = store
+            .items_of(account)
+            .into_iter()
+            .map(|item| (item.key.source_id, item.read))
+            .collect();
+        assert_eq!(ids, [("a".to_string(), true), ("c".to_string(), false)]);
+
+        // A later time makes the item unread, and the read state of the same step makes it read again. The time
+        // changed, so the items changed.
+        let later = changes(vec![item("a", 5)], &[("a", true)], &[]);
+        assert_eq!(store.apply_items(account, later), Ok(true));
+        assert!(store.items_of(account)[0].read);
+
+        assert_eq!(
+            store.apply_items(AccountId(9), ItemChanges::default()),
+            Err(Error::UnknownAccount(AccountId(9)))
         );
     }
 }

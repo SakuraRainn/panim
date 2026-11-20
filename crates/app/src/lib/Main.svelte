@@ -183,10 +183,15 @@
     openAccount(account);
   }
 
+  // The number of the latest call of loadUnread(). The answers can come in a different order (milestone 16).
+  let unreadSeq = 0;
+
   // The unread state of the account windows. The Rust side sends an event when it changes.
   async function loadUnread() {
+    const seq = ++unreadSeq;
     try {
-      unread = await api.unread();
+      const next = await api.unread();
+      if (seq === unreadSeq) unread = next;
     } catch {
       // The state is not important. The next event tries again.
     }

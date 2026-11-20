@@ -2,6 +2,23 @@
 
 All the changes of PANIM that a user can see are in this file. The versions use semantic versioning.
 
+## 0.1.3 (2026-11-19)
+
+This release has no new feature. It changes how PANIM seals the open browser profile and the Telegram folders.
+
+### Changes
+
+- **The windows do not stop.** Before, the windows of PANIM could stop for a short time during the unlock and during the seal every five minutes. Now this work does not stop the windows. A list can show its data a short time later.
+- **A correct copy of the browser data.** PANIM now copies the databases of a browser view (for example, the local storage of a site) with the backup interface of SQLite. Before, a copy during a write could give a damaged database after a crash.
+- **No seal when nothing changed.** Before, PANIM sealed the browser profile and the Telegram folders every five minutes, also when no file changed. Now it seals them only after a change.
+- **Fewer timeline updates from Telegram.** Before, each Telegram update wrote the data of the account three times and always updated the timeline. Now it writes one time, and only when something changed.
+- **A window that opens during a lock closes.** If PANIM locked while a browser view opened, the window could stay open on a locked vault. Now PANIM closes it.
+- **Two fast changes in the settings stay.** Before, a second change of the language or the automatic lock could undo the first change.
+
+### Known limits
+
+The known limits of 0.1.2 do not change. The repair of the timeline order in 0.1.2 now has an effect, because the answers of PANIM can come in a different order.
+
 ## 0.1.2 (2026-11-18)
 
 This release has no new feature. It repairs six problems.
@@ -13,7 +30,7 @@ This release has no new feature. It repairs six problems.
 - **A failed write does not change the data in PANIM.** Before, if a write to the disk failed, PANIM could show data that was not on the disk. Now PANIM puts back the data that it had before the change.
 - **Limits for a key file.** PANIM refuses a key file with scrypt or pbkdf2 settings above a limit. Before, such a file could stop PANIM or use all the memory. PANIM also compares the check value of the file in constant time.
 - **The unread GitHub notifications show.** Before, with the filter "unread", many GitHub events could hide older unread notifications.
-- **The timeline shows the selected filter.** Before, a slow older answer could replace the timeline after a fast change of the filter.
+- **The timeline keeps the latest filter.** PANIM now ignores an older answer of the timeline after a change of the filter. In this release, the answers always come in order, so you see no change. This protects a later release, which can answer out of order. (The `CHANGELOG.md` of the tag `v0.1.2` has an incorrect text here. The release notes on GitHub have the correct text.)
 
 ### Known limits
 

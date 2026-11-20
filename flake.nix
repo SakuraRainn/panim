@@ -181,6 +181,8 @@
             gst_all_1.gst-plugins-bad
             # TDLib is the Telegram library. It supplies `libtdjson.so` and the pkg-config file `tdjson`.
             (tdlibFor pkgs)
+            # The seal copies the SQLite files of WebKit with this SQLite. It is the SQLite that WebKitGTK loads.
+            sqlite
           ];
           # WebKitGTK needs glib-networking for TLS. Without it, no HTTPS page loads.
           GIO_EXTRA_MODULES = "${pkgs.glib-networking}/lib/gio/modules";

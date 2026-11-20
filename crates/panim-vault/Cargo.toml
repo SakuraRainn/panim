@@ -1,6 +1,6 @@
 [package]
 name = "panim-vault"
-version = "0.1.2"
+version = "0.1.3"
 edition.workspace = true
 license.workspace = true
 publish = false
@@ -15,6 +15,7 @@ hkdf = "0.13.0"
 panim-core = { path = "../panim-core" }
 pbkdf2 = "0.13.0"
 postcard = { version = "1.1.3", features = ["use-std"] }
+rusqlite = { version = "0.43.0", default-features = false, features = ["backup", "serialize"] }
 scrypt = "0.12.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"

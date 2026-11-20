@@ -33,6 +33,7 @@
   librsvg,
   gst_all_1,
   tdlib-panim,
+  sqlite,
   telegramApiId ? null,
   telegramApiHash ? null,
 }:
@@ -110,6 +111,8 @@ rustPlatform.buildRustPackage {
     gst_all_1.gst-plugins-good
     gst_all_1.gst-plugins-bad
     tdlib-panim
+    # The seal copies the SQLite files of WebKit with this SQLite. It is the SQLite that WebKitGTK loads.
+    sqlite
   ];
 
   env = {

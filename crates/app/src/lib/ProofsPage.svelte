@@ -40,11 +40,16 @@
   const proof = $derived(proofs.find((p) => p.account === selected) ?? null);
   const proofOf = (id: number) => proofs.find((p) => p.account === id);
 
+  // The number of the latest call of loadProofs(). A slow older call must not replace the answer of a newer call.
+  let proofsSeq = 0;
+
   async function loadProofs() {
+    const seq = ++proofsSeq;
     try {
-      proofs = await api.proofs();
+      const next = await api.proofs();
+      if (seq === proofsSeq) proofs = next;
     } catch (e) {
-      error = errorText(e);
+      if (seq === proofsSeq) error = errorText(e);
     }
   }
 

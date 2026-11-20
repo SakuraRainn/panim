@@ -1231,6 +1231,48 @@ mod tests {
     }
 
     #[test]
+    fn an_update_without_a_change_does_not_change_the_timeline() {
+        let f = Fixture::new();
+        let account = f.login();
+        f.wait(|| f.items().len() == 1);
+        let chat = |id: i64, read: bool| panim_telegram::ChatItem {
+            chat_id: id,
+            title: format!("Chat {id}"),
+            time: 1,
+            text: "hello".into(),
+            kind: None,
+            unread: u32::from(!read),
+            marked: false,
+            read,
+            outgoing: false,
+            can_write: true,
+        };
+        let items = |upsert: Vec<panim_telegram::ChatItem>, remove: Vec<i64>| Event::Items { upsert, remove };
+        let unread = || f.with(|s| s.sync_state().unwrap())[&account.id.0].unread;
+        let apply = |event| apply_event(&f.session, account.id.0, event);
+        let before = unread();
+
+        // Two new chats, then the same data again. The second event does not change the timeline.
+        assert!(apply(items(vec![chat(8, false), chat(9, false)], vec![])).timeline);
+        assert_eq!(unread(), before + 2);
+        let shown = f.items();
+        assert_eq!(
+            apply(items(vec![chat(8, false), chat(9, false)], vec![])),
+            Change::default()
+        );
+        assert_eq!(apply(items(vec![], vec![77])), Change::default());
+        assert_eq!(f.items(), shown);
+
+        // A read, a new chat and a removal in one event change the timeline and the unread count.
+        assert!(apply(items(vec![chat(8, true), chat(10, false)], vec![9])).timeline);
+        assert_eq!(unread(), before + 1);
+        let ids: Vec<_> = f.items().into_iter().map(|item| item.key.source_id).collect();
+        assert!(ids.contains(&panim_telegram::source_id(8)) && ids.contains(&panim_telegram::source_id(10)));
+        assert!(!ids.contains(&panim_telegram::source_id(9)));
+        f.lock();
+    }
+
+    #[test]
     fn the_chat_panel_reads_sends_and_shows_new_messages() {
         let f = Fixture::new();
         let account = f.login();

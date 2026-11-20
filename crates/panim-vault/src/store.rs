@@ -25,8 +25,9 @@ use std::sync::Arc;
 use std::collections::BTreeMap;
 
 use panim_core::{
-    Account, AccountId, Error, ItemKey, KeptProof, MemoryStore, NewAccount, NewItem, NewPersona, Persona, PersonaId,
-    Result, Route, SecretBytes, SecretRef, SecretStore, SecretTable, Store, StoreMeta, TimelineFilter, TimelineItem,
+    Account, AccountId, Error, ItemChanges, ItemKey, KeptProof, MemoryStore, NewAccount, NewItem, NewPersona, Persona,
+    PersonaId, Result, Route, SecretBytes, SecretRef, SecretStore, SecretTable, Store, StoreMeta, TimelineFilter,
+    TimelineItem,
 };
 
 use crate::Vault;
@@ -167,7 +168,7 @@ impl SealedStore {
     }
 
     /// Does a change to the items of one account. If `changed` is true for the result, the store writes the items
-    /// of the account. If the write fails, the items of the account in memory go back.
+    /// of the account. If the change or the write fails, the items of the account in memory go back.
     fn change_items<T>(
         &mut self,
         account: AccountId,
@@ -175,7 +176,13 @@ impl SealedStore {
         changed: impl FnOnce(&T) -> bool,
     ) -> Result<T> {
         let before = self.inner.items_of(account);
-        let value = change(&mut self.inner)?;
+        let value = match change(&mut self.inner) {
+            Ok(value) => value,
+            Err(error) => {
+                self.inner.replace_items(account, before);
+                return Err(error);
+            }
+        };
         if changed(&value)
             && let Err(error) = self.save_items(account)
         {
@@ -272,6 +279,11 @@ impl Store for SealedStore {
 
     fn unread_count(&self, account: AccountId) -> usize {
         self.inner.unread_count(account)
+    }
+
+    /// Writes the items file of the account one time, and only if the items changed.
+    fn apply_items(&mut self, account: AccountId, changes: ItemChanges) -> Result<bool> {
+        self.change_items(account, |inner| inner.apply_items(account, changes), |changed| *changed)
     }
 }
 
@@ -768,6 +780,62 @@ mod tests {
         fails_without_change(&mut f, |s| s.remove_items(first, &["x".to_string()]));
         fails_without_change(&mut f, |s| s.set_read(&key, false));
         fails_without_change(&mut f, |s| s.set_read_many(first, &[("y".to_string(), true)]));
+        fails_without_change(&mut f, |s| s.apply_items(first, all_changes()));
+    }
+
+    /// A put, a read and a removal for the items of the fixture.
+    fn all_changes() -> ItemChanges {
+        ItemChanges {
+            put: vec![item("z", 3)],
+            read: vec![("x".to_string(), true)],
+            remove: vec!["y".to_string()],
+        }
+    }
+
+    #[test]
+    fn apply_items_without_a_change_writes_no_file() {
+        let mut f = fixture();
+        let first = f.first;
+        let before = snapshot(&f.store);
+        let same = ItemChanges {
+            put: vec![item("x", 1)],
+            read: vec![("y".to_string(), false)],
+            remove: vec!["unknown".to_string()],
+        };
+        // If the store writes a file, the hook stops the write and the result is an error.
+        Vault::fail_next_write();
+        assert_eq!(f.store.apply_items(first, same), Ok(false));
+        assert_eq!(f.store.apply_items(first, ItemChanges::default()), Ok(false));
+        assert_eq!(snapshot(&f.store), before);
+        // The hook is still set, so no write occurred. The next step with a change fails and changes nothing.
+        assert!(matches!(
+            f.store.apply_items(first, all_changes()),
+            Err(Error::Storage(_))
+        ));
+        assert_eq!(snapshot(&f.store), before);
+        assert_eq!(snapshot(&SealedStore::open(f.vault.clone()).unwrap()), before);
+    }
+
+    #[test]
+    fn apply_items_writes_the_file_one_time() {
+        let mut f = fixture();
+        let first = f.first;
+        // One write occurs. A second write fails.
+        Vault::fail_write_after(1);
+        assert_eq!(f.store.apply_items(first, all_changes()), Ok(true));
+        let after = snapshot(&f.store);
+        // The hook is still set, so the step did exactly one write. The next write fails.
+        let result = f.store.set_read_many(first, &[("x".to_string(), false)]);
+        assert!(matches!(result, Err(Error::Storage(_))), "{result:?}");
+        assert_eq!(snapshot(&f.store), after);
+        let items: Vec<_> = after
+            .timeline
+            .iter()
+            .filter(|item| item.key.account == first)
+            .map(|item| (item.key.source_id.as_str(), item.read))
+            .collect();
+        assert_eq!(items, [("z", false), ("x", true)]);
+        assert_eq!(snapshot(&SealedStore::open(f.vault.clone()).unwrap()), after);
     }
 
     #[test]
