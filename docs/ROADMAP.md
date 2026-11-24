@@ -19,11 +19,11 @@ The work is on the branch `main`. Until 2026-11-18, its name was `step-1` (`DISC
 | 9 | The X API: the user adds their own developer key. PANIM shows the cost of each action | After release 0.1.0 (`DISCUSSION.md` §28) | An X developer key with credit |
 | 10 | Release 0.1.0 for Linux: the package (Nix, with `wrapGAppsHook`), the backup, `CHANGELOG.md`, the merge of `step-1` | Complete. Release 0.1.0 is public (2026-11-17, §6) | — |
 | 11 | The documents and the release steps: `README.md` for the users, `CONTRIBUTING.md`, `SECURITY.md`, issue templates, the script for the public commit, the AppImage message on Ubuntu | Complete. Release 0.1.1 is public (2026-11-18, §7) | — |
-| 12 | macOS: the app, the browser profiles, TDLib and the package on macOS | Not started. Release 0.2.0 (§10). This is a large milestone | A Mac for the tests. An Apple Developer account for the signature of the app (optional) |
+| 12 | macOS: the app, the browser profiles, TDLib and the package on macOS | Started on `next-0.2`. Release 0.2.0 (§10). This is a large milestone | A Mac for the tests. An Apple Developer account for the signature of the app (optional) |
 | 13 | Bluesky: the timeline, the notifications, posts and answers, the direct messages. Proof format version 2 and the automatic check of a proof post | Not started. Release 0.3.0 (§11) | — |
 | 14 | Email services through IMAP/SMTP: mail in the timeline, mail out, IMAP IDLE. Check 3: IMAP/SMTP through the proxy | Not started. Release 0.3.0 (§11) | — |
 | 15 | Six repairs: the automatic lock in all the windows, stronger passcode settings, no change in memory after a failed write, limits for a key file, the unread GitHub notifications, the order of the timeline answers | Complete. Release 0.1.2 is public (2026-11-18, §8) | — |
-| 16 | The seal of the open folders: no freeze of the window, fewer Telegram writes, no seal when nothing changed, a correct copy of the SQLite files | Not started. Release 0.1.3 (§9) | — |
+| 16 | The seal of the open folders: no freeze of the window, fewer Telegram writes, no seal when nothing changed, a correct copy of the SQLite files | Complete. Release 0.1.3 is public (2026-11-19, §9) | — |
 
 Release 0.1.0 has GitHub and Telegram in the shared timeline, and X, Discord and Proton Mail in browser views. Release 0.1.1 has milestone 11. Release 0.1.2 has milestone 15 (`DISCUSSION.md` §44, §45). Release 0.1.3 has milestone 16 (`DISCUSSION.md` §45, §46). Release 0.2.0 has milestone 12 (`DISCUSSION.md` §33, §34). Release 0.3.0 has milestones 13 and 14 (`DISCUSSION.md` §42). Milestones 8 and 9 come later.
 
@@ -169,7 +169,7 @@ The agent built the AppImage with dummy values only (`api_id` 1). These are the 
 7. Start the build of check 1 (no values) with the same test vault. Make sure that the account with PANIM's values shows the warning about missing app values and does not connect. Make sure that the account with the own values connects.
 8. In the settings, click "Back up…". Save the file. Make sure that the browser windows close, that the size shows, and that the Telegram accounts connect again.
 9. Close PANIM. Start PANIM with a new empty `PANIM_DATA`. On the first screen, click "Restore from a backup". Make sure that the warning about the old computer shows. Select the file of check 8. Open the vault with the passcode. Make sure that the accounts, the timeline, a browser login and the Telegram sessions are there. Also try a key file as the backup, and make sure that PANIM refuses it.
-10. Make the AppImage with the values: `nix build --impure .#appimage-release`. Copy it to a test system that is not NixOS, for example a virtual machine with Fedora or Debian. Start it. Make sure that the window opens, that the fonts show, that x.com loads, and that a Telegram login connects. If it does not start, try `--appimage-extract-and-run`, then `WEBKIT_DISABLE_DMABUF_RENDERER=1`, and record the result.
+10. Make the AppImage with the values: `nix build --impure .#appimage-release`. Copy it to a test system that is not NixOS, for example a virtual machine with Fedora or Debian. Start it. Make sure that the window opens, that the fonts show, that x.com loads, and that a Telegram login connects. If it does not start, try `--appimage-extract-and-run`, then `WEBKIT_DISABLE_DMABUF_RENDERER=1`, and record the result. (Release 0.2.0 removed this target, `DISCUSSION.md` §50.)
 11. Select Chinese in the settings. Make sure that the Telegram app values, the backup and the restore show their texts in Chinese.
 12. Before the release: register the app "PANIM" on my.telegram.org with a Telegram account that is only for this purpose (`DISCUSSION.md` §29). Put the values into `~/.config/panim/telegram.env`, not into the repository.
 13. The person made the minisign key pair on 2026-11-17 (key id `7B5C5C4A551F160B`). The secret key is in `~/.minisign/panim.key`, outside the repository. `README.md` has the public key. After the tag, run `nix run .#release` with `--key ~/.minisign/panim.key` (`README.md`). On a different computer, check the download with `sha256sum -c SHA256SUMS` and `minisign -Vm SHA256SUMS -P RWQLFh9VSlxce6HvAgce8fOpN5K41RRR5zeh8KsFVMPIDtdmRGD1MkXa`.
@@ -367,6 +367,13 @@ The review found seven problems. Five repairs are in `main`, and `DISCUSSION.md`
 - PANIM stopped with `pkill -9` after a periodic seal. After a new start, the login to X was there.
 - The vault of release 0.1.2 opened, and the accounts, the timeline and the Telegram sessions were there.
 
+**Complete (2026-11-19).** The release steps:
+
+1. `main` got the tag `v0.1.3` (commit `d4f52ec`). The tag is also in `SakuraRainn/panim-dev`.
+2. The AppImage was built from the tag with the values of PANIM. The person signed `SHA256SUMS` with the key `7B5C5C4A551F160B`.
+3. `nix run .#publish` made the public commit `44d700c` on top of the commit of 0.1.2. The person pushed it with the tag `v0.1.3`.
+4. The release v0.1.3 of `SakuraRainn/panim` has the AppImage, the source archive, `SHA256SUMS` and `SHA256SUMS.minisig`.
+
 ## 10. Release 0.2.0
 
 Release 0.2.0 has milestone 12. A new system is a new feature, so the version goes to 0.2.0 (`DISCUSSION.md` §34).
@@ -383,6 +390,260 @@ Checks before we build:
 4. **TDLib.** Build the TDLib of PANIM with its patch for macOS (`aarch64-darwin` and `x86_64-darwin`). Do the checks with `strace` again with the tools of macOS.
 5. **The unread counts.** Make sure that the title and the notification script operate in WKWebView.
 
+#### The inventory of the code (2026-11-19)
+
+The coordinator read the code of `next-0.2` with Tauri 2.12.5 and `wry` 0.57.2. No Mac was used. These parts depend on Linux.
+
+Problems that stop PANIM or make it unsafe on macOS:
+
+1. **The browser profile** (`main.rs`, `.data_directory(profile)` in the two account windows).
+   - WKWebView does not support `data_directory`. Tauri gives `data_store_identifier([u8; 16])` for macOS 14 and later.
+   - macOS then keeps the data in its own folder, not in the profile area of PANIM. Thus, the seal of Linux does not apply.
+   - `wry` can list and delete the data stores (`fetch_data_store_identifiers`, `remove_data_store`). A seal that keeps the logins needs check 1 first.
+   - This is the largest risk of the milestone.
+   - **Done in the code (2026-11-24). Not tested on a Mac.** On macOS, the two windows use `data_store_identifier`. When the profile opens, the session makes the folder of the store a symbolic link to the open profile folder, and it deletes the link at the close (`DISCUSSION.md` §54). The tests on Linux examine the link with a temporary folder.
+2. **The memory area** (`panim-vault/src/profile.rs`, `ProfileArea::runtime`; `main.rs`, the start).
+   - The area needs `XDG_RUNTIME_DIR`. macOS does not set it, so PANIM stops at the start.
+   - The TDLib folders also use this area. Make a macOS area after milestone 16, because milestone 16 changes this code.
+   - **Done in the code (2026-11-24). Not tested on a Mac.** On macOS, `src-tauri/src/ramdisk.rs` makes a RAM disk of 2 GiB at the start and mounts it in `$TMPDIR` with `nobrowse` (`DISCUSSION.md` §53). The exit detaches it after the lock. The tests on Linux examine only the parse of the output of `hdiutil` and `diskutil`.
+3. **The proxy of a profile** (`main.rs`, `.proxy_url` in the two account windows).
+   - On macOS, it compiles only with the feature `macos-proxy` of Tauri, and it operates only on macOS 14 and later.
+   - Without the feature, the profiles do not use the route of the persona. Thus, the minimum is macOS 14.
+   - **Done in the code (2026-11-19). Not tested on a Mac.** `Cargo.toml` sets `macos-proxy` only for macOS. `bundle/macos.json` sets macOS 14.0 as the minimum.
+   - **Done in the code (2026-11-24). Not tested on a Mac.** `src-tauri/Info.plist` sets `NSAllowsArbitraryLoadsInWebContent`, so that plain `http://` pages load (`DISCUSSION.md` §55, "The plain HTTP failure").
+4. **The OpenSSL of TDLib** (`scripts/build-tdlib.sh`).
+   - On macOS, the script links the OpenSSL of Homebrew as a shared library. The `libtdjson` in the `.app` then needs a Homebrew folder that users do not have.
+   - Link OpenSSL statically on macOS. Make sure with `otool -L`. macOS supplies zlib.
+   - **Done in the script (2026-11-19). Not tested on a Mac.** The script sets `OPENSSL_USE_STATIC_LIBS`. After the build, it stops if `otool -L` shows a library in `/opt/homebrew`, `/usr/local` or `/nix`.
+   - **Checked on the macOS runner (2026-11-20).** `libtdjson` has no path of Homebrew. The objects of OpenSSL are for macOS 15.0 (see "The first run on the macOS runner").
+   - **Done in the script (2026-11-20). Not tested on a Mac.** The script builds OpenSSL 3.5.9 from source for macOS 14, because the objects of Homebrew were for macOS 15.0 (`DISCUSSION.md` §52). It stops if an object of OpenSSL has a minimum above 14.0. The workflow does not install openssl@3.
+
+Parts that operate on macOS, but differently from Linux:
+
+5. **The input for the automatic lock** (`main.rs`, `watch_input`). The handler uses GTK. On macOS, the function does nothing, so the input in a browser window does not reset the lock. Use an `NSEvent` local monitor.
+   - **Done in the code (2026-11-19). Not tested on a Mac.** `watch_app_input` installs one local monitor in `setup`. It counts the input of all the windows, but not of the main window.
+6. **The vault folder** (`main.rs`, `data_dir`). It uses `~/.local/share/panim`. The usual folder of a macOS app is `~/Library/Application Support/panim`.
+   - **Done in the code (2026-11-19). Not tested on a Mac.** On macOS, `data_dir` gives `~/Library/Application Support/panim`. `PANIM_DATA` has priority, as on Linux (`DISCUSSION.md` §51).
+7. **The notification script** (`unread.js`). It replaces `window.Notification`. WKWebView supports this interface differently. Check 5 examines it.
+8. **The unread count from the title** (`main.rs`, `on_document_title_changed`). Tauri gives no platform limit for it. Check 5 examines it.
+
+Parts that need no change:
+
+- The Unix file functions of `panim-vault` (the modes of the folders and files). macOS is a Unix system.
+- The link to TDLib (`#[link(name = "tdjson")]`), and the run path `@executable_path/../Frameworks` in `bundle/macos.json` and `scripts/build-packages.sh`.
+- The user interface. It has no text or key that is only for Linux.
+- The patch of TDLib. It changes code that all the systems use.
+
+Other notes:
+
+- The flake builds only for Linux. The macOS build uses the build without Nix (`DISCUSSION.md` §40).
+- `tauri.conf.json` gives only PNG icons. The bundler made `PANIM.icns` from them in the first run on the macOS runner.
+- The architecture is not decided yet. The macOS runners of GitHub use Apple silicon, so start with `aarch64`.
+- Release 0.1.3 added `rusqlite` with the SQLite of the system (`DISCUSSION.md` §48). On macOS, it links the `libsqlite3` of the system. Examine which SQLite WKWebView uses, and whether the seal of item 1 needs the backup interface of SQLite.
+
+The sequence of the work:
+
+1. Now, on `next-0.2`: items 3, 4, 5 and 6. They do not change the seal.
+   - **Done in the code (2026-11-19).** Nobody ran this code on a Mac. On Linux, `cargo test` passed (262 passed, 0 failed), and the behavior did not change.
+   - A check from Linux compiled the code of the crate `panim` for `aarch64-apple-darwin` with `cargo clippy`. This check does not link, and it did not compile the C part of `objc2`.
+2. On the macOS runners of GitHub (the person agrees to the minutes first): the five checks, and items 1, 3, 7 and 8.
+   - **Done (2026-11-24)** in runs 44660826017 and 45249682616. All the checks gave a result. Check 4 has no check of the direct connections yet.
+3. After milestone 16 (release 0.1.3): items 1 and 2, with the decisions from the checks in `DISCUSSION.md`.
+   - Release 0.1.3 is merged into `next-0.2` (2026-11-23). The decisions are in `DISCUSSION.md` §53 to §55.
+4. On a Mac: the hand checks, then the signature of Apple.
+
+#### The checks on the macOS runners
+
+The workflow `.github/workflows/macos-check.yml` does step 2 of the sequence above. Only a push to the branch `macos-check` starts it.
+
+- To start a run, push `next-0.2` to `macos-check`: `git push origin next-0.2:macos-check`.
+- Each run uses the minutes of a macOS runner, and a macOS minute costs approximately 10 times a Linux minute. Start a run only when the person agrees.
+- The first run builds TDLib and takes approximately 45 to 60 minutes. A run with the caches takes approximately 20 to 25 minutes. The time limit is 75 minutes.
+
+The run does these steps on `macos-15` (Apple silicon):
+
+1. The spike `spikes/macos-webview` (checks 1, 2 and 5, items 1, 3, 7 and 8). Its `README.md` tells each check.
+2. A RAM disk with `hdiutil` (check 3, item 2).
+3. The TDLib of PANIM with `scripts/build-tdlib.sh`, and an examination with `otool` (part of check 4). The check of the direct connections is not in this run. The `README.md` of the spike gives a method.
+4. `pnpm check`, `cargo fmt`, `cargo clippy` and `cargo test`, without Nix.
+5. The `.app` and the `.dmg` with `scripts/build-packages.sh`. The run examines the libraries, the run paths, the minimum of macOS and the signature. Then it starts PANIM for 15 seconds, and a second time for 10 seconds with the same data folder. The two starts examine the RAM disk of PANIM (`DISCUSSION.md` §53): its folder, its mount with `nobrowse`, its device file and its use again after a kill.
+
+The third run also adds two spike checks: `data_store.link_after_close` (`DISCUSSION.md` §54) and `ramdisk.memory` (`DISCUSSION.md` §53).
+
+The results are in the artifacts of the run. `macos-check-report` has the logs and the spike results, and `macos-dmg` has the `.dmg`. GitHub keeps them for 7 days. The page of the run also shows each `CHECK` line.
+
+#### The first run on the macOS runner (2026-11-20)
+
+Run 44660826017 used commit `e4d5e0b` on macOS 15.8.2 (arm64, 3 cores, 7 GB), with Xcode 16.4 and Rust 1.97.1. It took 30 minutes. The result was "failure", because two steps failed. The other steps passed.
+
+The time of the long steps:
+
+- The spike: 6 minutes. The build of TDLib: 15 minutes, without a cache.
+- `cargo clippy`: 70 s. `cargo test`: 76 s. The `.app` and the `.dmg`: 3.5 minutes.
+
+The steps that failed:
+
+1. **`cargo test`.** The test binary of the crate `panim` did not compile: "symbol `_EMBED_INFO_PLIST` is already defined". The test module `acl` calls `generate_context!` a second time, and on macOS each call adds this symbol. No test ran on macOS.
+   - Repaired (2026-11-20): the test module uses `generate_context!(test = true)`. Not tested on a Mac.
+2. **The examination of the `.app`.** The workflow called `lipo -archs` with two files, and `lipo` accepts only one. Thus, the step stopped before the `codesign` lines and the `package.*` checks.
+   - Repaired (2026-11-20) in the workflow. The lines before the error give the facts below.
+
+TDLib (check 4, item 4):
+
+- PASS: `libtdjson` needs only `libz`, `libc++` and `libSystem` of the system. It has no path of Homebrew or Nix. Thus, the static OpenSSL operates.
+- PASS: `minos` is 14.0 (SDK 15.5). The size is 27 MB.
+- A risk: `ld` gave warnings that the objects of `libcrypto.a` of Homebrew (OpenSSL 3.5.9) are for macOS 15.0. The library says 14.0, but this OpenSSL can use functions that macOS 14 does not have. Nobody started it on macOS 14.
+  - Repaired (2026-11-20): the script builds OpenSSL 3.5.9 from source for macOS 14 (item 4). Not tested on a Mac.
+
+The `.app` and the `.dmg`:
+
+- The bundler made `PANIM.app` (39 MB) and `PANIM_0.1.2_aarch64.dmg` (15 MB). It also made `PANIM.icns` from the PNG icons.
+- `Contents/Frameworks` has `libtdjson`. The binary has one run path, `@executable_path/../Frameworks`, and it needs only frameworks of the system and `@rpath/libtdjson`.
+- `LSMinimumSystemVersion` is 14.0. `minos` of the binary and of `libtdjson` is 14.0.
+- `ld` said "duplicate -rpath '@executable_path/../Frameworks' ignored". The bundler and `PANIM_TDJSON_RPATH` both add this run path. The result is correct.
+- Not examined: the signature (`codesign`), because the step stopped before it.
+
+The start of 15 s:
+
+- PASS: PANIM ran for 15 s. The screenshot shows the main window with the first step of the welcome page.
+- `smoke.log` is empty. The data folder was empty after 15 s.
+
+The spike (checks 1, 2, 3 and 5):
+
+- PASS: the title, the notification script, and the write, persistence and isolation of the data stores.
+- The data store of an identifier is in `~/Library/WebKit/<bundle id>/WebsiteDataStore/<uuid in lowercase>`. The app also has `~/Library/Caches/<bundle id>`.
+- PASS: a seal of the folder only. After a delete of the folder, the data is gone. After a copy back, the data is there.
+- FAIL: `fetch_data_store_identifiers` and `remove_data_store`. The child process stopped with SIGSEGV each time (4 of 4). The spike summary says "None" and "no answer", but the cause is the crash. `remove_data_store` deleted the folder before the crash.
+- PASS: the proxy with HTTPS, through an HTTP proxy and a SOCKS5 proxy. SOCKS5 got the host name (`atyp=domain`).
+- FAIL: the proxy with plain HTTP. See "The plain HTTP failure" below.
+- Not valid: the DNS check. See "The DNS check" below.
+- INFO: a RAM disk with `hdiutil` operates. It has its own device, and it can mount with `nobrowse`.
+
+#### The plain HTTP failure
+
+The logs show these facts:
+
+- Each load of an `http://` URL with a host name failed. This is true with the HTTP proxy, with the SOCKS5 proxy and without a proxy (`dns-control`).
+- For these loads, the child printed no `LOAD started` line. The proxy logs have no line, and `tcpdump` saw no DNS lookup of the name.
+- The loads of `http://127.0.0.1:<port>` operated. The log of the test server has each request.
+- The `Info.plist` of the spike has no key `NSAppTransportSecurity`.
+
+Thus, WebKit did not send the request to the network. App Transport Security (ATS) is a possible cause, because ATS does not apply to an IP address. The logs do not show that ATS is the cause. The spike does not record the error of a failed navigation.
+
+A check for the next run:
+
+1. Collect the system log of the time of the HTTP loads: `log show --last 10m --predicate 'eventMessage CONTAINS[c] "App Transport Security"'`.
+2. Load the two `http://` pages again in a second `.app` with `NSAllowsArbitraryLoadsInWebContent` set to true.
+3. Add a navigation handler to the child that prints each URL, so that the log shows if `wry` got the request.
+
+If the pages load in step 2, the cause is ATS. Then PANIM must decide if the browser windows can open plain HTTP pages.
+
+The second run showed that ATS is the cause. `src-tauri/Info.plist` now sets `NSAllowsArbitraryLoadsInWebContent` (2026-11-24, `DISCUSSION.md` §55). Not tested on a Mac.
+
+#### The DNS check
+
+The control load used `http://`, and this load did not go to the network (see above). Thus, the control was not valid. The method of `tcpdump` operated: it recorded 68 lines of DNS traffic of the system.
+
+A better method for the next run:
+
+1. Use an `https://` URL for the control load without a proxy. Then the system must do a lookup of the control name.
+2. Keep `tcpdump` on port 53.
+3. Add a second record: a small DNS server of the spike on 127.0.0.1 that logs each name. Set it as the DNS server with `networksetup -setdnsservers`. Set the old value again at the end.
+
+`log stream` of `mDNSResponder` is not a good method. macOS shows the host names in this log as `<private>`.
+
+Other changes for the next run:
+
+- Upload the crash reports of the spike from `~/Library/Logs/DiagnosticReports`. They show where `fetch_data_store_identifiers` and `remove_data_store` stop.
+- Mark the spike checks as FAIL with the text "crash" when a child stops with a signal.
+
+Done in the spike for the second run (2026-11-20, not run yet): the checks above, the ATS check with `PanimCheckAts.app`, the DNS server with `/etc/resolver` instead of `networksetup`, the link to a RAM disk, the data store functions with a webview, and the list of `~/Library/Caches`. Refer to `spikes/macos-webview/README.md`.
+
+#### The second run on the macOS runner (2026-11-24)
+
+Run 45249682616 used commit `9e4dbf8` (before the merge of release 0.1.3) on macOS 15.8.2. The first two attempts got no runner, and GitHub cancelled them after 15 minutes. The third attempt took 24 minutes, and all the steps passed.
+
+The build and the package:
+
+- PASS: `cargo test` on macOS (262 passed, 0 failed). The repair with `generate_context!(test = true)` operates.
+- PASS: the OpenSSL from source (item 4). The objects have the minimum 14.0, and `ld` gave no warning about a newer macOS. The build of OpenSSL and TDLib took 839 s.
+- PASS: `libtdjson` and the `.app` have no path of Homebrew or Nix. `minos` and `LSMinimumSystemVersion` are 14.0. The `.app` is 39 MB, and the `.dmg` is 15 MB.
+- PASS: PANIM ran for 15 s.
+
+Plain HTTP (item 3):
+
+- The cause is App Transport Security (ATS). With the key `NSAllowsArbitraryLoadsInWebContent` in `Info.plist`, `http://neverssl.com/` loaded with no proxy, through the HTTP proxy and through the SOCKS5 proxy. Without the key, it did not load in the three cases.
+- With the key, the HTTP proxy got `CONNECT neverssl.com:80`, and the SOCKS5 proxy got the host name (`atyp=domain`).
+
+The DNS lookup (check 2):
+
+- PASS: the method is valid. The local DNS server got the lookup of the control name, which loaded with no proxy.
+- PASS: with HTTPS, through the HTTP proxy and through the SOCKS5 proxy, the DNS server got no lookup. The proxy got the host name. Thus, the DNS lookup stays in the proxy.
+- The same check with plain HTTP did not load, because the app of this check had no ATS key.
+
+The data stores (item 1):
+
+- PASS again: the write, the persistence, the isolation and the seal of the folder only.
+- FAIL again: `fetch_data_store_identifiers` and `remove_data_store` in a process with no web view. The process stopped with SIGSEGV. The crash report shows `WTF::RunLoop::dispatch` in the code of WebKit.
+- PASS: the same two functions in a process with a web view. `remove_data_store` deleted the folder of the store, and the data was gone.
+- PASS: a symbolic link from `WebsiteDataStore/<uuid>` to a folder on a RAM disk. WebKit wrote the cookies, the local storage and IndexedDB on the RAM disk (21 files, 575 KB). A new process read them. The link stayed a link.
+- `~/Library/Caches/<bundle id>/WebKit` has the files of the default store only: `AlternativeService.sqlite` and three `salt` files (66 KB). It has no cookies and no local storage.
+
+The RAM disk (check 3, item 2):
+
+- PASS: the user of the runner made a RAM disk without `sudo`, with `hdiutil attach -nomount ram://` and `diskutil erasevolume APFS`. It mounted the volume again with `nobrowse` at a private folder, and detached it.
+- The volume has "Owners: Disabled". Thus, the mode of a file does not stop other users. A folder of the user with mode 700 around the mount point stops them.
+
+The unread counts (check 5):
+
+- PASS again: the title and `unread.js`. Without `unread.js`, `Notification` exists in WKWebView, and its permission is "denied".
+
+The decisions from this run are in `DISCUSSION.md` §53 to §55.
+
+
+#### The third run on the macOS runner (2026-11-24)
+
+Run 45308011980 used commit `593c4fb`, with the code of items 1 and 2 and the merge of release 0.1.3. It took 35 minutes. The result was "failure".
+
+The build:
+
+- PASS: TDLib came from the cache. `cargo clippy` passed, so the code of items 1 and 2 compiles on macOS.
+- FAIL: `cargo test` and the `.app` did not link: "Undefined symbols: `_sqlite3_set_clientdata`". `rusqlite` 0.43 needs SQLite 3.44 or later. The SQLite of the macOS SDK is older. Release 0.1.3 added `rusqlite`.
+  - Repaired (2026-11-24): macOS uses the bundled SQLite of `rusqlite` (`DISCUSSION.md` §56). Not tested on a Mac.
+- Thus, the tests on macOS, the examination of the `.app` and the start of PANIM did not run. The checks of the RAM disk of PANIM did not run.
+
+The spike:
+
+- From the child 17 on, the processes of the spike did not stop after their work, and the watchdog stopped them. In the second run, the same code had no such stop. Thus, the results of the children 17 to 37 are not valid in this run.
+- FAIL: `data_store.link_after_close`. The child made its main window, and then its event loop gave no event. This is the child 33, so the same problem is a probable cause.
+  - Changed (2026-11-24): the child makes the first window of the store before the event loop starts, and it writes each step. Not tested on a Mac.
+- The children 1 to 16 gave the same results as in the second run.
+
+The memory of a RAM disk of 2 GiB (`ramdisk.memory`):
+
+- The attach and the erase did not take 2 GiB. The free memory changed by less than 15 MiB, and the wired memory by less than 40 MiB.
+- After the detach, 535 MiB more memory were free than before the attach. Thus, the RAM disk keeps memory for the data that it got, and the detach gives it back.
+
+#### The fourth run on the macOS runner (2026-11-24)
+
+Run 45315372353 used commit `7c25fea`, with the bundled SQLite on macOS. It took approximately 30 minutes, and all the steps passed.
+
+The build and PANIM:
+
+- PASS: `cargo test` on macOS (291 passed, 0 failed). The bundled SQLite links.
+- PASS: the `.app` (41 MB) and the `.dmg` (16 MB). `minos` and `LSMinimumSystemVersion` are 14.0, and no path of Homebrew or Nix.
+- PASS: PANIM ran for 15 s, with no `XDG_RUNTIME_DIR`.
+- PASS: `smoke.ramdisk`. PANIM made its RAM disk: one base folder with mode 700, the name from SHA-256 of the data folder, the `device` file, and one APFS mount with `nobrowse` at `area`.
+- PASS: `smoke.ramdisk_reuse`. After a kill, the second start used the same RAM disk.
+- The step detached the RAM disk at the end. The exit of PANIM with a detach (Cmd+Q) is not examined. The 15 s start does not open a vault, so the link of item 1 did not run.
+
+The spike:
+
+- The children 1 to 16 gave the same results as in the second run.
+- From the child 17 on, the processes did not stop after their work, as in the third run. The first run had the same stop from the child 17 on. Only the second run did not have it. Thus, the cause is in the runner or in the spike, not in PANIM. The results of the children 17 to 37 are not valid in this run.
+- `data_store.link_after_close`: the write passed (all the four values). The log shows `LOOP start`, but the event loop gave no event after it. Thus, the seal and the reopen did not occur. The question of §54 is still open.
+
+The memory of a RAM disk of 2 GiB: the same result as in the third run. The attach and the erase did not take 2 GiB. The detach gave back 530 MiB.
 ### A build without Nix
 
 Release 0.2.0 also gets a usual build, and the Nix package stays on top of it (`DISCUSSION.md` §40):
@@ -392,12 +653,67 @@ Release 0.2.0 also gets a usual build, and the Nix package stays on top of it (`
 3. The Nix package (`nix/package.nix`) stays. It uses the same TDLib patch.
 4. `CONTRIBUTING.md` gives the two ways to build.
 
+**The Linux part is complete (2026-11-19).** `docker/check.sh all` passed on the computer of the person, with Docker:
+
+- The build in a clean Ubuntu 24.04 container: `pnpm check`, `cargo fmt`, `cargo clippy` and `cargo test` (256 passed, 0 failed) passed. The binary and `libtdjson` have no `/nix/store` path.
+- The `.deb` in a clean Ubuntu 24.04, the AppImage (unpacked) in Ubuntu and the `.rpm` in a clean Fedora 45 found all their libraries. PANIM ran for 15 seconds in Xvfb in each case.
+- Not done yet: the signature of the new packages, and a start of the AppImage without `--appimage-extract`.
+- **Complete (2026-11-20).** The AppImage has `libtdjson` one time, in `usr/lib` (`ARCHITECTURE.md` §11). `docker/check.sh all` passed again with commit `1b08f07`. The AppImage is now approximately 91.5 MiB. Before, it was approximately 105.7 MiB.
+
+**More checks (2026-11-19), after the merge of release 0.1.2 into `next-0.2` (commit `45806bc`):**
+
+- `docker/check.sh all` passed again: `cargo test` (262 passed, 0 failed), the `.deb`, the AppImage and the `.rpm`.
+- **The AppImage through FUSE: complete.** In a clean Ubuntu 24.04 container, it started directly, not unpacked. The container had only `fuse3` and the usual libraries of a desktop (X11, Wayland, GL, fonts), and no WebKitGTK. PANIM ran for 15 seconds in Xvfb.
+- **The AppImage without FUSE 3.** It shows "No suitable fusermount binary found", then it unpacks itself and starts PANIM.
+- **The signature: complete.** `nix run .#release` with a test key wrote and signed the checksums of the `.deb`, the `.rpm`, the AppImage and the source archive. All the checksums and the signature passed. The script needs no change. The real signature comes at the release.
+- **The glibc.** The binary, `libtdjson` and WebKitGTK need glibc 2.39 or later (Ubuntu 24.04, Debian 13, Fedora 40 and later).
+
+Release 0.2.0 publishes these packages and stops the AppImage of Nix (`DISCUSSION.md` §50). `README.md` tells the new packages. Open tasks:
+
+1. A release build of the packages with the Telegram app values. Then change the release steps in `CONTRIBUTING.md`. Until then, the release steps tell the AppImage of Nix.
+   - **Done in the code (2026-11-24).** The first real release build runs on the computer of the maintainer, because this computer has no Docker and no values.
+   - `docker/check.sh --values FILE` is the release mode. The build container reads only FILE, read-only. The script refuses the mode if the repository has changes, or if `HEAD` does not have the tag `v<version>`.
+   - After the build, it fails if the build gave "Telegram is not configured" or if the binary does not have the `api_hash`. It never prints a value.
+   - A test with a stub engine examined the checks on the host and the arguments of the engine. A test with fake files examined the check of the values. Nobody ran the containers in this mode yet.
+   - `CONTRIBUTING.md` "Make a release" now tells these steps.
+2. The `.dmg` of a release with the Telegram app values (`DISCUSSION.md` §57).
+   - **Done in the code (2026-11-24). Not run yet.** `.github/workflows/macos-release.yml` builds it for a push to `macos-release`, from a tag `v<version>` or `v<version>-rc.<n>`. `bundle/macos.json` signs the `.app` ad hoc, and the two macOS workflows examine the signature. `README.md` and `CONTRIBUTING.md` tell the new steps.
+3. The removal of `packages.appimage-release`, `packages.appimage` and the two patches of the `AppRun`.
+   - **Done (2026-11-24).** The flake has no AppImage, no `appimage-apprun` and no input `nix-appimage`. We deleted the two patches. `flake.lock` lost only the nodes of `nix-appimage`. `packages.panim-release` stays for the hand checks with Nix.
+
 Then build:
 
 1. The app on macOS, with the same features as on Linux.
 2. The package: an `.app` and a `.dmg`, from Nix if possible. The checksums and the signature of the release, as on Linux.
 3. The signature and the notarization of Apple, if the person has an Apple Developer account. If not, record how a user starts an app that has no signature.
 4. The hand checks of milestones 3 to 7 and 10 on a Mac.
+
+Release 0.2.0 has macOS (`DISCUSSION.md` §57): only Apple silicon, an ad hoc signature, and a `.dmg` from the workflow `macos-release.yml`. Item 2 does not use Nix. Item 3: no signature of Apple in release 0.2.0.
+
+#### The hand checks on a Mac
+
+Use a Mac with Apple silicon and macOS 14 or later. Use the `.dmg` of a release candidate (`v0.2.0-rc.<n>`), so that it has the Telegram app values. Use test accounts only (`DISCUSSION.md` §12).
+
+1. **The install.** Download the `.dmg` and its `SHA256SUMS`, and check the checksum. Open the `.dmg`, and move PANIM to Applications.
+   - Open PANIM. macOS blocks it. In System Settings > Privacy & Security, select "Open Anyway". Record the exact text of each message.
+2. **The first start.** Make a passcode. Write down the 12 recovery words, and check them. Save a key file.
+   - Make sure that the vault is in `~/Library/Application Support/panim`.
+   - Run `mount | grep panim`. One volume with `nobrowse` is at `$TMPDIR/panim-<16 hex>/area`.
+3. **The browser profile.** Add an X or Discord account. Log in in its window, and close the window.
+   - Run `ls -l ~/Library/WebKit/io.github.sakurarainn.panim/WebsiteDataStore/`. The folder of the store is a link to the RAM disk.
+   - Lock PANIM. The link is gone. Wait one minute, and run the `ls` again. Record if WebKit made a new folder (`DISCUSSION.md` §54).
+   - Unlock. Open the account again. The login is still there.
+4. **The automatic lock.** Set a short time. Type in an account window. The lock does not occur while you type. Stop. The lock occurs.
+5. **The proxy.** Set a proxy for the persona. In an account window, open a page that shows your address. It shows the address of the proxy.
+6. **The unread counts.** Make a new message for a test account. The count shows in the main window.
+7. **GitHub.** Do the device login. The notifications show in the timeline. Answer one.
+8. **Telegram.** Log in with a test number. The chats show in the timeline. Send one message. Lock and unlock. The account is still logged in.
+9. **The proofs.** Make a proof for an account, and examine it.
+10. **The backup.** Make a backup. Remove the data folder (with `PANIM_DATA`, use a test folder). Restore the backup. The accounts and the logins are there.
+11. **The exit.** Quit PANIM with Cmd+Q. `mount | grep panim` shows nothing. Start PANIM again, and unlock. The logins are there.
+12. **After a crash.** Stop PANIM with `kill -9`. Start it again. It uses the same RAM disk, and it unlocks.
+
+Record the results in this section, with the date, the macOS version and the model of the Mac.
 
 ## 11. Release 0.3.0
 

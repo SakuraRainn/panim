@@ -8,14 +8,9 @@
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    # The AppImage of a release: one file with the closure of PANIM (`docs/ARCHITECTURE.md` §11).
-    nix-appimage = {
-      url = "github:ralismark/nix-appimage";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
   };
 
-  outputs = { self, nixpkgs, rust-overlay, nix-appimage }:
+  outputs = { self, nixpkgs, rust-overlay }:
     let
       lib = nixpkgs.lib;
       systems = [ "x86_64-linux" "aarch64-linux" ];
@@ -47,8 +42,9 @@
         tdlib-panim = tdlibFor pkgs;
       };
 
-      # PANIM with the Telegram app values of PANIM, for a release (`CONTRIBUTING.md`). Only an impure build can read the
-      # environment: `nix build --impure .#panim-release`. The values then are in the Nix store and in the binary.
+      # PANIM with the Telegram app values of PANIM, for the hand checks with Nix (`docs/ROADMAP.md` §6). The release
+      # packages do not come from it (`CONTRIBUTING.md`). Only an impure build can read the environment:
+      # `nix build --impure .#panim-release`. The values then are in the Nix store and in the binary.
       releaseFor = pkgs:
         let
           id = builtins.getEnv "PANIM_TELEGRAM_API_ID";
@@ -63,60 +59,6 @@
             telegramApiId = id;
             telegramApiHash = lib.toLower hash;
           };
-
-      # The AppRun of nix-appimage, with two patches. Without `nix/appimage-apprun-store.patch`, the AppImage does not
-      # start on a system without `/nix/store`. `nix/appimage-apprun-userns-help.patch` tells what to do when the
-      # system blocks user namespaces, for example Ubuntu 24.04 and later. The AppRun runs before the store of the
-      # image is visible, so it must be static, as the original.
-      apprunFor = pkgs:
-        let
-          src = pkgs.applyPatches {
-            name = "appimage-apprun-source";
-            src = "${nix-appimage}/appruns/userns-chroot";
-            patches = [
-              ./nix/appimage-apprun-store.patch
-              ./nix/appimage-apprun-userns-help.patch
-            ];
-          };
-        in
-        pkgs.pkgsStatic.runCommandCC "AppRun-panim" { } ''
-          mkdir $out
-          mkdir $out/mountroot
-          $CC ${src}/main.c -o $out/AppRun
-        '';
-
-      # The AppImage of a package. A small launcher starts PANIM. On a system that is not NixOS, it tells libglvnd
-      # to use the Mesa drivers in the AppImage, because the drivers of the system do not load with the libraries of
-      # Nix. The desktop file and the icon come from the package.
-      appimageFor = system: pkgs: panim:
-        let
-          mesa = pkgs.mesa;
-          launcher = pkgs.runCommand "panim-launcher-${panim.version}" { } ''
-            mkdir -p $out/bin
-            ln -s ${panim}/share $out/share
-            cat > $out/bin/panim <<'EOF'
-            #!${pkgs.runtimeShell}
-            if [ ! -e /run/opengl-driver ]; then
-              export __EGL_VENDOR_LIBRARY_FILENAMES="''${__EGL_VENDOR_LIBRARY_FILENAMES:-${mesa}/share/glvnd/egl_vendor.d/50_mesa.json}"
-              export LIBGL_DRIVERS_PATH="''${LIBGL_DRIVERS_PATH:-${mesa}/lib/dri}"
-              export GBM_BACKENDS_PATH="''${GBM_BACKENDS_PATH:-${mesa}/lib/gbm}"
-              # The fontconfig of Nix knows only one font. The configuration of the system names its font folders,
-              # for example the Chinese fonts.
-              if [ -z "''${FONTCONFIG_FILE:-}" ] && [ -f /etc/fonts/fonts.conf ]; then
-                export FONTCONFIG_FILE=/etc/fonts/fonts.conf
-              fi
-            fi
-            exec ${panim}/bin/panim "$@"
-            EOF
-            chmod 755 $out/bin/panim
-          '';
-        in
-        nix-appimage.lib.${system}.mkAppImage {
-          program = "${launcher}/bin/panim";
-          apprun = apprunFor pkgs;
-          name = "PANIM-${panim.version}-${pkgs.stdenv.hostPlatform.parsed.cpu.name}.AppImage";
-          squashfsArgs = [ "-comp" "zstd" "-Xcompression-level" "19" ];
-        };
     in {
       packages = forAll (system: pkgs: rec {
         # `nix build .#tdlib` builds the library alone. The build is long.
@@ -126,11 +68,6 @@
         default = panim;
         # `nix build --impure .#panim-release`, with the values in the environment.
         panim-release = releaseFor pkgs;
-        # The AppImage without the values (for a test), and with the values (for a release, `--impure`).
-        appimage = appimageFor system pkgs panim;
-        appimage-release = appimageFor system pkgs panim-release;
-        # The patched AppRun of the AppImage alone, for a test.
-        appimage-apprun = apprunFor pkgs;
       });
 
       apps = forAll (system: pkgs: {

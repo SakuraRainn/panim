@@ -354,9 +354,10 @@ Each connector polls the platform or listens to it. It writes timeline items to 
   - The periodic seal occurs only if a file changed. PANIM compares the path, the size and the modification time of each file with the last seal. The `-shm` file of a SQLite database is not in this comparison.
   - Before Linux 6.13, the times of the files in tmpfs are not exact. Thus, if a file changed in the last two seconds, the next periodic seal always occurs.
   - The seal at a lock, at an exit and at a backup always occurs.
-  - The seal makes a copy of each SQLite database with the backup interface of SQLite (`rusqlite`, with the SQLite of the system). The copy is one state of the database. The archive holds the copy without its `-wal`, `-shm` and `-journal` files. If the copy fails, the seal copies the files as before.
+  - The seal makes a copy of each SQLite database with the backup interface of SQLite (`rusqlite`). On Linux, `rusqlite` uses the SQLite of the system. On macOS, it uses the bundled SQLite, because the SQLite of macOS is older than 3.44 (`docs/DISCUSSION.md` §56). The copy is one state of the database. The archive holds the copy without its `-wal`, `-shm` and `-journal` files. If the copy fails, the seal copies the files as before.
   - A database in WAL mode without a `-wal` file is closed. The seal copies it as a usual file.
   - `DISCUSSION.md` §46 to §49 give the reasons and the known limits.
+- On macOS, the profile area is on a RAM disk, and WKWebView gets the profile through a link (§11, `DISCUSSION.md` §53 and §54). The seal does not change.
 - PANIM does not read the content of the page.
 - The unread count comes from the title of the page. The Rust side reads the title when it changes. It keeps only the count, not the title:
   - `(N)` at the start of the title gives the count N, for example on X and Proton Mail.
@@ -497,6 +498,53 @@ At that time, make sure that each call to the ZIKARON command line can name the 
   - The package also has a desktop file and two icons.
   - The tests do not run in the Nix build. They run in the dev shell (`AGENTS.md` §6).
   - The dev shell has the same Rust toolchain as the package, and also Clippy and rustfmt. Thus, a build in the dev shell does not need rustup.
+- **The build without Nix** (release 0.2.0, `DISCUSSION.md` §40). It uses the libraries of the system, rustup, pnpm and the bundler of Tauri. `CONTRIBUTING.md` gives the steps. The Nix package, the dev shell, the automatic tests and the release scripts do not change.
+  - `scripts/build-tdlib.sh` downloads TDLib 1.8.68 at the commit of the patch, and it examines the SHA-256 of the archive. The unpacked archive has the same Nix hash as the source of the `tdlib` package of nixpkgs.
+  - It applies `nix/tdlib-no-direct.patch`, the same file as the flake. Then it builds only the CMake target `tdjson`.
+  - It installs the shared library, the two headers of the JSON interface and `tdjson.pc` into a prefix (by default `target/tdlib`). This is the same set of files as in `tdlib-panim`. In a shared prefix, the script replaces only these files.
+  - The number of jobs depends on the cores and on the free memory, because some files of TDLib need approximately 2 GB each.
+  - The flake gets the TDLib commit from nixpkgs, and the script has its own commit. The two must stay the same (`AGENTS.md` §6).
+- **The run path of `libtdjson`.** The build script of `panim-telegram` finds `tdjson` through pkg-config in the two builds. Without Nix, `PKG_CONFIG_PATH` must contain `target/tdlib/lib/pkgconfig`.
+  - Cargo gives a link argument of a build script only to the binaries of its own crate. Thus, `panim-telegram` has the key `links = "tdjson"`, and it gives the run path to the crate `panim` as `DEP_TDJSON_RPATH`. The build script of `panim` adds it to the app and to its tests.
+  - By default, the run path is the folder of the library. `PANIM_TDJSON_RPATH` replaces it. Only `scripts/build-packages.sh` sets it.
+  - In the Nix build, the compiler wrapper of Nix also adds the store path of `tdlib-panim`. The fixup of Nix removes the second copy of the path.
+- **The packages from the bundler of Tauri.** `scripts/build-packages.sh` runs `pnpm tauri build --config src-tauri/bundle/linux.json`. The separate file sets `bundle.active` and the targets. `tauri.conf.json` keeps `bundle.active` false, so `pnpm tauri build --no-bundle` and the Nix package do not change.
+  - The `.deb` and the `.rpm` have `libtdjson.so.1.8.68` in `/usr/lib/panim`. The script sets the run path to `$ORIGIN/../lib/panim`. Thus, `/usr/bin/panim` finds the library, and the binary has no path of the build computer.
+  - The `.deb` depends on `libssl3t64 | libssl3`, `zlib1g` and `libsqlite3-0`. The bundler adds WebKitGTK and GTK.
+  - The `.rpm` depends on the names of the libraries, for example `libssl.so.3()(64bit)`. Thus, it does not use the package names of one distribution.
+  - The AppImage has one copy of `libtdjson`, in `usr/lib`. `linuxdeploy` of the bundler copies it there, and it changes the run path of the binary to `$ORIGIN/../lib`. `linux.json` has no `files` for the AppImage, so `linuxdeploy` finds the library through `LD_LIBRARY_PATH`. `scripts/build-packages.sh` sets it. `docker/check.sh install` fails if the AppImage has a different number of copies.
+  - macOS (made only on a macOS runner of GitHub, `ROADMAP.md` §10): `bundle/macos.json` makes an `.app` and a `.dmg`. The bundler copies `libtdjson.1.8.68.dylib` into `Contents/Frameworks`. The run path is `@executable_path/../Frameworks`, and the install name of the library from CMake is `@rpath/libtdjson.1.8.68.dylib`.
+  - The macOS package of release 0.2.0 is only for Apple silicon (`aarch64`), and it has no signature of Apple (`DISCUSSION.md` §57). `bundle/macos.json` sets `signingIdentity` to `-`, so the bundler signs the `.app` ad hoc. The signature then binds `Info.plist` and seals the resources, and `codesign --verify --deep --strict` passes. Without it, only the linker signed the binary, and the verify failed.
+  - `bundle/macos.json` also sets `hardenedRuntime` to false. The hardened runtime is necessary only for the notarization of Apple. With an ad hoc signature, its library validation can refuse `libtdjson`.
+  - A first start of the `.dmg` needs "Open Anyway" in System Settings > Privacy & Security (`README.md`).
+- **macOS** (milestone 12, not tested on a Mac). These parts are in the code. They do not change the behavior on Linux.
+  - The minimum is macOS 14 (`DISCUSSION.md` §51). `bundle/macos.json` sets `minimumSystemVersion` to `14.0`.
+  - On macOS, `scripts/build-tdlib.sh` and `scripts/build-packages.sh` set `MACOSX_DEPLOYMENT_TARGET` to `14.0`. Without it, clang and rustc use the version of the build computer.
+  - `Cargo.toml` sets the Tauri feature `macos-proxy` only for macOS. Without it, wry ignores `proxy_url` on macOS, and the profiles do not use the route of the persona.
+  - On macOS, `scripts/build-tdlib.sh` links OpenSSL statically into `libtdjson`, because users do not have Homebrew. After the build, it stops if `otool -L` shows a library in `/opt/homebrew`, `/usr/local` or `/nix`.
+  - The script builds this OpenSSL from source (`DISCUSSION.md` §52). The version and the SHA-256 of the archive are constants in the script, as for TDLib. Linux uses the OpenSSL of the system.
+    - It builds OpenSSL 3.5.9 with `no-shared` and `-mmacosx-version-min=14.0`. It stops if `otool -l` shows an object of `libcrypto.a` or `libssl.a` with a minimum above macOS 14.0.
+    - The folder of the OpenSSL settings and of the default certificates is `/etc/ssl`. TDLib reads the default certificates on macOS, and macOS supplies `/etc/ssl/cert.pem`.
+    - The build of OpenSSL is in the work folder of the script. A stamp file there has the version, the SHA-256, the minimum of macOS and the target. If the stamp is correct, the script does not build OpenSSL again.
+  - The automatic lock gets the input of the browser windows from one `NSEvent` local monitor. `setup` installs it one time, on the main thread. It counts key presses, button presses and scroll events, but not the events of the main window. A page script cannot make an `NSEvent`.
+  - The vault folder on macOS is `~/Library/Application Support/panim`. `PANIM_DATA` has priority, as on Linux.
+  - The memory area is a RAM disk of 2 GiB (`src-tauri/src/ramdisk.rs`, `DISCUSSION.md` §53). Linux uses `$XDG_RUNTIME_DIR` as before.
+    - At the start, PANIM runs `hdiutil attach -nomount ram://`, `diskutil erasevolume APFS`, `diskutil unmount` and `diskutil mount -mountOptions nobrowse -mountPoint`. It finds the APFS volume in the output of `erasevolume`.
+    - The mount point is `$TMPDIR/panim-<16 hexadecimal digits>/area`. The digits come from SHA-256 of the path of the data folder. The folder around it has mode 700.
+    - The file `device` next to `area` holds the device of the RAM disk. After a crash, the next start uses the mounted RAM disk again.
+    - The profile area is `area/panim`. If PANIM cannot make the RAM disk, it stops at the start with a message.
+    - At the exit, after the lock sealed the folders, PANIM detaches the RAM disk with `hdiutil detach`. If the lock failed, PANIM does not detach it.
+  - The browser windows use `data_store_identifier`, not `data_directory` (`DISCUSSION.md` §54).
+    - The identifier is the first 16 bytes of SHA-256 of `panim-webkit-store/1`, the area name of the vault and the profile folder, with the bits of a UUID of version 8.
+    - WebKit keeps the store in `~/Library/WebKit/<bundle id>/WebsiteDataStore/<uuid in lowercase>`. The bundle id comes from the configuration of Tauri.
+    - When the profile opens, the session makes this place a symbolic link to the open profile folder. First, it deletes a link, a folder or a file that is at the place. When the profile closes, the session deletes the link.
+    - PANIM does not use `fetch_data_store_identifiers` or `remove_data_store`. They stop a process with no web view.
+  - `src-tauri/Info.plist` sets `NSAppTransportSecurity` › `NSAllowsArbitraryLoadsInWebContent` to true, so that the browser windows load plain `http://` pages (`DISCUSSION.md` §55). The bundler of Tauri merges this file into the `Info.plist` of the `.app`, because it is next to `tauri.conf.json`. On Linux, the build does not read it.
+- **The check of the build without Nix.** `docker/check.sh` uses Docker or rootless Podman (`CONTAINER_ENGINE`). GitHub Actions does not run it.
+  - `build` makes an image from `docker/ubuntu.Dockerfile`: Ubuntu 24.04, its libraries, Node.js, pnpm, rustup with the Rust of `rust-toolchain.toml`, and the TDLib of the script. The engine keeps the TDLib layer until the script or the patch changes.
+  - In a container, it copies the repository (read only), and does `pnpm install`, `pnpm build`, `pnpm check`, `cargo fmt`, `cargo clippy`, `cargo test` and `scripts/build-packages.sh`. It writes a report with the run paths and with the count of `/nix/store` paths in the binary and in `libtdjson`.
+  - `install` installs the `.deb` in a clean Ubuntu 24.04 and the `.rpm` in a clean Fedora, and unpacks the AppImage. It examines the libraries with `ldd`, and starts PANIM for 15 seconds in Xvfb.
+  - `--values FILE` is the release build with the Telegram app values (below). Before the engine starts, the script refuses it if the repository has changes, or if `HEAD` does not have the tag `v<version>` of `tauri.conf.json`.
 - **The automatic tests.** `.github/workflows/ci.yml` runs on GitHub Actions for a push to `main`, a pull request against `main`, and a start by hand.
   - The job `test` runs on `ubuntu-latest` in `nix develop`: `pnpm install --frozen-lockfile`, `pnpm build`, `pnpm check`, `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings` and `cargo test`.
   - It sets `PANIM_TELEGRAM_ENV` to an empty value, and `PANIM_DATA` and `XDG_RUNTIME_DIR` to temporary folders. The tests need no window and no display.
@@ -513,25 +561,26 @@ At that time, make sure that each call to the ZIKARON command line can name the 
   - The key of the Nix cache has the hash of `flake.nix`, `flake.lock` and the TDLib patch. A new key builds TDLib again only if TDLib changed.
   - A private repository has 2,000 minutes each month (free plan). The first run builds TDLib and takes approximately 40 to 70 minutes. A run with the caches takes approximately 8 to 12 minutes.
   - The workflow is not in the public repository (`.gitattributes`). The public repository gets only the snapshots of the releases.
+- **The checks on macOS (milestone 12).** `.github/workflows/macos-check.yml` runs only for a push to the branch `macos-check`, on `macos-15` (Apple silicon).
+  - It runs the spike `spikes/macos-webview` and a RAM disk check. Then it builds TDLib with a cache and does the steps of `AGENTS.md` §6 without Nix.
+  - It builds the `.app` and the `.dmg`, examines them, and starts PANIM for 15 seconds. It sets `MACOSX_DEPLOYMENT_TARGET` to `14.0`.
+  - The artifact `macos-check-report` has the results. `ROADMAP.md` §10 tells how to start a run.
+  - The examination of the `.app` fails if `codesign --verify --deep --strict` fails, or if the signature is not ad hoc with sealed resources. It also verifies `libtdjson`. It records `spctl --assess` as information only, because macOS rejects an app with no signature of Apple.
+- **The macOS release** (`DISCUSSION.md` §57). `.github/workflows/macos-release.yml` runs only for a push to the branch `macos-release`, on `macos-15`. It has the same setup and the same TDLib cache key as the check.
+  - It refuses a commit without the tag `v<version>` or `v<version>-rc.<n>`, where `<version>` is the version of `tauri.conf.json`. It finds the tags with `git tag --points-at HEAD`, as `docker/check.sh --values` does.
+  - It gets the Telegram app values from the secrets `PANIM_TELEGRAM_API_ID` and `PANIM_TELEGRAM_API_HASH`. Only the step that examines them, the build step and the two value checks get them in `env`. The tests do not get them. No step prints them, and no step uses `set -x`.
+  - It runs `pnpm check` and `cargo test`, then `scripts/build-packages.sh`. It does the examination of the `.app` of the check, the check of the values of `docker/check.sh` and a start of 15 s.
+  - It uploads the `.dmg` as the artifact `macos-release-dmg` (7 days), and writes its SHA-256 on the summary page. The maintainer downloads it, and `nix run .#release` signs its checksum with the other files (`CONTRIBUTING.md`).
+  - At the end, it removes the release build of the workspace crates and the bundle from `target/`. Cargo also keeps the values of `rerun-if-env-changed` in `.fingerprint`. Then the step fails if a file of `target/` has the `api_hash`, so that the cache of Rust does not save the values.
+  - The caches of GitHub belong to a branch. Thus, the first run on `macos-release` builds TDLib again.
 - **The Telegram app values.** The source never has them.
   - `packages.panim` has no values. A pure build cannot read the environment or `~/.config/panim/telegram.env`, and the derivation sets `PANIM_TELEGRAM_ENV` to an empty value. Then the app asks for the own values of the person.
-  - `packages.panim-release` reads `PANIM_TELEGRAM_API_ID` and `PANIM_TELEGRAM_API_HASH` from the environment. This is possible only with `nix build --impure`. The flake examines the form of the values, and its errors do not show the values.
-  - The values of a release build go into the derivation, the Nix store of that computer and the binary. Any person who has the binary can read them. This is also true for all the other apps that have an `api_id`.
-- **The AppImage.** `packages.appimage-release` (with the values) and `packages.appimage` (without them) are one file with the full closure of PANIM. The input `nix-appimage` makes it:
-  - The file is a type 2 AppImage: the runtime of the AppImage project and a SquashFS image (zstd) with `/nix/store`.
-  - The `AppRun` makes a user namespace and shows the store of the image at `/nix/store`. Then it starts a small launcher.
-  - The `AppRun` comes from `appruns/userns-chroot/main.c` of `nix-appimage`, with our patch `nix/appimage-apprun-store.patch` (`DISCUSSION.md` §30). The flake compiles it as a static binary, as the original, because it runs before the store of the image is visible.
-    - On NixOS, the `AppRun` makes an overlay of the store of the image and the store of the system.
-    - On a system without `/nix/store`, the overlay fails. Then the `AppRun` binds a folder of the image onto `/nix/store`. Without the patch, it bound `<appdir>/nix`, so each path became `/nix/store/store/<hash>-...`, and the start failed with "No such file or directory". The patch binds `<appdir>/nix/store`.
-    - The rest of `main.c` does not need a `/nix` on the system. It does not copy the root entry `nix` of the system into the new root, and the new `/nix` comes from the image.
-    - The second patch `nix/appimage-apprun-userns-help.patch` (milestone 11) adds a message for a system that blocks unprivileged user namespaces, for example Ubuntu 24.04 and later with AppArmor. The patch file tells the details:
-      - The message shows when `unshare` fails, when a write to `uid_map`, `setgroups` or `gid_map` fails, and when the mount of the tmpfs fails with `EPERM` or `EACCES`. The first error line of the `AppRun` stays.
-      - If `/proc/sys/kernel/apparmor_restrict_unprivileged_userns` is 1, the message shows an AppArmor profile with `userns` for the path in `$APPIMAGE`. The runtime of the AppImage sets this variable. If the path has a quote or a pattern character, the message points only to `README.md`.
-      - If not, the message tells the person to ask the administrator. In each case, it names the Nix package and the section "Ubuntu 24.04 and later" of `README.md`.
-      - `--appimage-extract-and-run` does not help. The runtime extracts the image and starts the same `AppRun` (`src/runtime/runtime.c` of `appimage/type2-runtime`).
-      - The patch is separate from the store patch, so that PANIM can remove the store patch when `nix-appimage` fixes the bind.
-    - `packages.appimage-apprun` is the patched `AppRun` alone, for a test.
-  - On a system that is not NixOS (no `/run/opengl-driver`), the launcher tells libglvnd and Mesa to use the Mesa drivers in the image. The drivers of the system do not load with the libraries of Nix. It also sets `FONTCONFIG_FILE` to `/etc/fonts/fonts.conf` of the system, because the fontconfig of Nix knows only one font and no Chinese font.
+  - `packages.panim-release` reads `PANIM_TELEGRAM_API_ID` and `PANIM_TELEGRAM_API_HASH` from the environment. This is possible only with `nix build --impure`. The flake examines the form of the values, and its errors do not show the values. It is for the hand checks with Nix. The release packages do not come from it.
+  - The release packages get the values from `docker/check.sh --values FILE` (`CONTRIBUTING.md`, "Make a release"). The engine mounts FILE read-only into the build container when the container starts. FILE is not in the image, and the values are not in the environment of the container. In the container, `PANIM_TELEGRAM_ENV` names the mounted file.
+  - After the build, the check fails if the build gave the warning "Telegram is not configured", or if the binary does not have the `api_hash`. It shows only "yes" or "no", never a value.
+  - The `.dmg` gets the values from two secrets of the development repository, in `macos-release.yml` (above). GitHub also hides the secrets in the logs.
+  - The values of a release build go into the binary. With Nix, they also go into the derivation and the Nix store of that computer. Any person who has the binary can read them. This is also true for all the other apps that have an `api_id`.
+- **The AppImage of Nix.** We removed it for release 0.2.0 (`DISCUSSION.md` §50). Releases 0.1.0 to 0.1.3 published it. It was one file with the closure of PANIM. The input `nix-appimage` made it, and two patches of PANIM changed its `AppRun`. The `AppRun` needed a user namespace, and Ubuntu 24.04 and later block it with AppArmor. Now the flake has no AppImage, no `nix-appimage` and no `AppRun` patches. The release packages come from the build without Nix (`docker/check.sh --values`).
 - **The checksums and the signature.** `nix run .#release -- --version X.Y.Z --ref REF --key KEY --out FOLDER [--artifact FILE]... [--pubkey PUB]` runs `nix/release.sh`:
   1. It makes the source snapshot `panim-<version>-source.tar.gz` with `git archive` and `gzip -n`. The same commit gives the same bytes.
   2. It copies each artifact into the folder.
@@ -548,8 +597,5 @@ At that time, make sure that each call to the ZIKARON command line can name the 
   - The email must have the form `<name>@users.noreply.github.com`, so that the email of the development repository does not become public. `--allow-any-email` stops this check.
   - The script uses `git` with settings that do not depend on the configuration of the person: no filters, no hooks and no signature.
 - Known limits:
-  - The AppImage needs unprivileged user namespaces. Some systems turn them off, for example Ubuntu 24.04 and later with its AppArmor rule. Then the `AppRun` tells what to do (the second patch above). On Ubuntu, an AppArmor profile with `userns` for the path of the AppImage gives the namespaces to the AppImage only (`README.md`). Nobody tested this profile on Ubuntu yet. The AppImage also needs FUSE 3, or the option `--appimage-extract-and-run`.
-  - The AppImage has the Mesa drivers of nixpkgs. They do not support the proprietary NVIDIA driver. Then WebKitGTK can need `WEBKIT_DISABLE_DMABUF_RENDERER=1` or `LIBGL_ALWAYS_SOFTWARE=1`.
-  - The AppImage does not supply the locales of glibc. GTK then uses the C locale for the format of dates and numbers. The texts of PANIM do not change.
-  - Fixed: the first AppImage did not start on Fedora, because the `AppRun` bound the wrong folder (the patch above). A test with `bwrap --tmpfs /nix` on NixOS shows the fix. The new AppImage waits for a new test by the person on a system that is not NixOS (`ROADMAP.md` §6).
-  - The current directory of the process must not be in `/nix`. The `AppRun` goes back to it after the change of the root.
+  - The `.deb`, the `.rpm` and the AppImage need glibc 2.39 or later, because they come from Ubuntu 24.04 (`DISCUSSION.md` §50). Ubuntu 22.04 and Debian 12 cannot start them.
+  - The AppImage needs FUSE 3 (`fusermount`). Without it, the AppImage unpacks itself into a temporary folder and starts more slowly.

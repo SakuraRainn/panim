@@ -4,7 +4,8 @@
 //! - The commands in this file give the session to the user interface.
 //! - `unread` holds the unread state of the account windows, without Tauri.
 //! - `activity` limits the event `input-elsewhere`, without Tauri. On Linux, [`watch_input`] gets the input of a
-//!   browser window from GTK. The automatic lock in the main window counts this input.
+//!   browser window from GTK. On macOS, one `NSEvent` monitor gets the input of all the windows. The automatic lock
+//!   in the main window counts this input.
 //! - Browser-view accounts open in their own windows. Only the main window can call the commands
 //!   (`capabilities/main.json`). The account windows load sites of other parties. They can call only `page_notice`,
 //!   which has no arguments (`capabilities/account.json`).
@@ -24,11 +25,14 @@
 //!   `check_pasted_proof`, `check_github_proof` and `open_gist_page`.
 //! - The settings use `telegram_app`, `set_telegram_app` and `forget_telegram_app` for the Telegram app values, and
 //!   `backup_vault` for the backup. The first start uses `restore_vault` (milestone 10).
+//! - On macOS, `ramdisk` makes the RAM disk of the memory area, and the browser windows use the data store of the
+//!   open profile (`docs/DISCUSSION.md` §53 and §54).
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod activity;
 mod github;
+mod ramdisk;
 mod session;
 mod telegram;
 mod unread;
@@ -80,8 +84,8 @@ const INPUT_ELSEWHERE: &str = "input-elsewhere";
 static INPUT_THROTTLE: Mutex<activity::Throttle> = Mutex::new(activity::Throttle::new());
 
 /// Tells the main window about the input of the person in a browser window, no more than one time in
-/// [`activity::GAP`]. Only Linux uses it until milestone 12.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+/// [`activity::GAP`]. Only Linux and macOS use it.
+#[cfg_attr(not(any(target_os = "linux", target_os = "macos")), allow(dead_code))]
 fn input_elsewhere(app: &AppHandle) {
     let send = INPUT_THROTTLE
         .lock()
@@ -116,9 +120,54 @@ fn watch_input(window: &WebviewWindow) {
     });
 }
 
-/// On other systems, the browser windows do not reset the automatic lock yet. Milestone 12 does this for macOS.
+/// On macOS, this function does nothing. The monitor of [`watch_app_input`] gets the input of all the windows. On
+/// other systems, the browser windows do not reset the automatic lock.
 #[cfg(not(target_os = "linux"))]
 fn watch_input(_window: &WebviewWindow) {}
+
+/// Gets the input of the person in the browser windows from AppKit, for the automatic lock (milestone 12).
+///
+/// A local monitor of `NSEvent` gets each event of the app before a window gets it. One monitor serves all the
+/// windows, so `setup` installs it one time, on the main thread. The handler counts only key presses, button presses
+/// and scroll events. It does not count the events of the main window, because the main window counts its own input.
+/// It gives back the event with no change. Only the real input of the person makes an `NSEvent`. The script of a
+/// page cannot make one. Thus, a page cannot stop the automatic lock.
+///
+/// Not tested on a Mac yet (`docs/ROADMAP.md` §10).
+#[cfg(target_os = "macos")]
+fn watch_app_input(app: &AppHandle) {
+    use block2::RcBlock;
+    use objc2::MainThreadMarker;
+    use objc2::rc::Retained;
+    use objc2_app_kit::{NSEvent, NSEventMask};
+    use std::ptr::NonNull;
+
+    // The address of the main window. It is 0 if the main window is not available.
+    let main = app
+        .get_webview_window("main")
+        .and_then(|window| window.ns_window().ok())
+        .map_or(0, |window| window as usize);
+    let app = app.clone();
+    let handler = RcBlock::new(move |event: NonNull<NSEvent>| -> *mut NSEvent {
+        // SAFETY: AppKit gives a valid event to the handler, and the event stays valid while the handler runs.
+        let event_ref = unsafe { event.as_ref() };
+        // AppKit calls a local monitor on the main thread.
+        let window = MainThreadMarker::new().and_then(|mtm| event_ref.window(mtm));
+        if window.is_none_or(|window| Retained::as_ptr(&window) as usize != main) {
+            input_elsewhere(&app);
+        }
+        event.as_ptr()
+    });
+    let mask = NSEventMask::KeyDown
+        | NSEventMask::LeftMouseDown
+        | NSEventMask::RightMouseDown
+        | NSEventMask::OtherMouseDown
+        | NSEventMask::ScrollWheel;
+    // SAFETY: the handler gives back the event that it got. Thus, the return is a valid pointer.
+    let monitor = unsafe { NSEvent::addLocalMonitorForEventsMatchingMask_handler(mask, &handler) };
+    // The monitor stays until the app stops. AppKit keeps the handler.
+    std::mem::forget(monitor);
+}
 
 /// The Telegram connector of the app: the runtime with the receive loop, and PANIM's values from the build.
 struct Telegram {
@@ -471,7 +520,9 @@ fn open_account_window(app: &AppHandle, session: &Mutex<Session>, id: u64) -> Ap
             return Ok(());
         }
     }
-    let (account, profile, route) = with(session, |s| s.browser_target(AccountId(id)))?;
+    let ((account, profile, route), store) = with(session, |s| {
+        Ok((s.browser_target(AccountId(id))?, s.profile_store_id()?))
+    })?;
     if account.browser.is_none() {
         let (url, title) = with(session, |s| s.home_page(AccountId(id)))?;
         return open_profile_window(app, session, home, url, &title);
@@ -490,16 +541,18 @@ fn open_account_window(app: &AppHandle, session: &Mutex<Session>, id: u64) -> Ap
     // The handler reads the title of the page and keeps only the unread count. In Tauri 2.12, a title handler does
     // not change the title of the window, so the window keeps the title below.
     let profile_path = profile.clone();
-    let mut builder = WebviewWindowBuilder::new(app, label, WebviewUrl::External(url))
+    let builder = WebviewWindowBuilder::new(app, label, WebviewUrl::External(url))
         .title(format!("{} · {}", account.display_name, account.handle))
-        .inner_size(1100.0, 800.0)
-        .data_directory(profile)
+        .inner_size(1100.0, 800.0);
+    let mut builder = in_profile(builder, profile, store)
         .user_agent(USER_AGENT)
         .initialization_script(NOTICE_SCRIPT)
         .on_document_title_changed(move |window, title| {
             // This handler runs on the main thread. The queue sends the title to the thread of the unread state.
             queue_unread(window.app_handle(), move |s| s.set_unread_title(account_id, &title));
         });
+    // On macOS, `proxy_url` operates only with the Tauri feature `macos-proxy` and on macOS 14 or later. Without
+    // the feature, wry ignores the proxy. `Cargo.toml` sets the feature for macOS (`docs/ARCHITECTURE.md` §11).
     if let Route::Proxy(proxy) = route {
         let proxy = url::Url::parse(&proxy.url()).map_err(|e| AppError {
             code: "bad_proxy",
@@ -514,6 +567,28 @@ fn open_account_window(app: &AppHandle, session: &Mutex<Session>, id: u64) -> Ap
         detail: e.to_string(),
     })?;
     keep_if_open(session, window, &profile_path)
+}
+
+/// Puts a browser window into the open browser profile of the persona.
+///
+/// - On Linux, WebKitGTK keeps the data in the open profile folder (`data_directory`).
+/// - On macOS, WKWebView does not support `data_directory`. The window uses the data store of `store`. The session
+///   made the folder of this store a symbolic link to the open profile folder (`docs/DISCUSSION.md` §54).
+fn in_profile<'a, R: tauri::Runtime, M: Manager<R>>(
+    builder: WebviewWindowBuilder<'a, R, M>,
+    profile: PathBuf,
+    store: [u8; 16],
+) -> WebviewWindowBuilder<'a, R, M> {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = profile;
+        builder.data_store_identifier(store)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = store;
+        builder.data_directory(profile)
+    }
 }
 
 /// Keeps a new browser window only if its profile is still the open profile of the vault.
@@ -544,15 +619,13 @@ fn open_profile_window(
     url: url::Url,
     title: &str,
 ) -> AppResult<()> {
-    let (profile, route) = session
-        .lock()
-        .map_err(|_| AppError::new("io", "poisoned"))?
-        .profile_target()?;
-    let mut builder = WebviewWindowBuilder::new(app, label, WebviewUrl::External(url))
+    let ((profile, route), store) = with(session, |s| Ok((s.profile_target()?, s.profile_store_id()?)))?;
+    let builder = WebviewWindowBuilder::new(app, label, WebviewUrl::External(url))
         .title(title)
-        .inner_size(1100.0, 800.0)
-        .data_directory(profile.clone())
-        .user_agent(USER_AGENT);
+        .inner_size(1100.0, 800.0);
+    let mut builder = in_profile(builder, profile.clone(), store).user_agent(USER_AGENT);
+    // On macOS, `proxy_url` operates only with the Tauri feature `macos-proxy` and on macOS 14 or later. Without
+    // the feature, wry ignores the proxy. `Cargo.toml` sets the feature for macOS (`docs/ARCHITECTURE.md` §11).
     if let Route::Proxy(proxy) = route {
         let proxy = url::Url::parse(&proxy.url()).map_err(|e| AppError::new("bad_proxy", e))?;
         builder = builder.proxy_url(proxy);
@@ -953,11 +1026,19 @@ async fn open_gist_page(app: AppHandle) -> AppResult<()> {
     .await
 }
 
-/// The vault folder: `$PANIM_DATA`, or `$XDG_DATA_HOME/panim`, or `~/.local/share/panim`.
+/// The vault folder. `$PANIM_DATA` has priority.
+///
+/// - On Linux, the folder is `$XDG_DATA_HOME/panim`, or `~/.local/share/panim`.
+/// - On macOS, the folder is `~/Library/Application Support/panim`, the usual folder of the data of an app.
 fn data_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("PANIM_DATA") {
         return PathBuf::from(dir);
     }
+    #[cfg(target_os = "macos")]
+    let base = std::env::var_os("HOME")
+        .map(|home| PathBuf::from(home).join("Library/Application Support"))
+        .expect("HOME is not set");
+    #[cfg(not(target_os = "macos"))]
     let base = std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")))
@@ -965,9 +1046,49 @@ fn data_dir() -> PathBuf {
     base.join("panim")
 }
 
+/// The RAM disk of the memory area on macOS (`docs/DISCUSSION.md` §53). `None` after the detach.
+#[cfg(target_os = "macos")]
+struct Ramdisk(Mutex<Option<ramdisk::RamDisk>>);
+
+/// The folder of the data stores of WebKit for the bundle identifier of the app:
+/// `~/Library/WebKit/<bundle id>/WebsiteDataStore`. WebKit keeps each data store in a folder in it.
+#[cfg(target_os = "macos")]
+fn webkit_stores(identifier: &str) -> PathBuf {
+    std::env::var_os("HOME")
+        .map(|home| {
+            PathBuf::from(home)
+                .join("Library/WebKit")
+                .join(identifier)
+                .join("WebsiteDataStore")
+        })
+        .expect("HOME is not set")
+}
+
+/// Detaches the RAM disk at the exit. Call it only after the lock sealed the folders in the area.
+#[cfg(target_os = "macos")]
+fn detach_ramdisk(app: &AppHandle) {
+    let Some(state) = app.try_state::<Ramdisk>() else {
+        return;
+    };
+    let Ok(mut disk) = state.0.lock() else { return };
+    if let Some(mut disk) = disk.take()
+        && let Err(error) = disk.detach()
+    {
+        eprintln!("panim: the RAM disk was not detached: {error}");
+    }
+}
+
 fn main() {
+    let data = data_dir();
+    // On macOS, the memory area is a RAM disk (`docs/DISCUSSION.md` §53).
+    #[cfg(target_os = "macos")]
+    let ramdisk = ramdisk::RamDisk::start(&data)
+        .unwrap_or_else(|error| panic!("PANIM cannot make the RAM disk for the browser profiles: {error}"));
+    #[cfg(target_os = "macos")]
+    let area = ProfileArea::at(ramdisk.area().join("panim"));
+    #[cfg(not(target_os = "macos"))]
     let area = ProfileArea::runtime().expect("PANIM needs XDG_RUNTIME_DIR for the browser profiles");
-    let session = Session::new(data_dir(), area, Strength::STANDARD);
+    let session = Session::new(data, area, Strength::STANDARD);
     let (unread_sender, unread_receiver) = mpsc::channel::<UnreadJob>();
 
     let app = tauri::Builder::default()
@@ -976,6 +1097,19 @@ fn main() {
         .manage(UnreadQueue(Mutex::new(unread_sender)))
         .on_window_event(account_window_event)
         .setup(move |app| {
+            #[cfg(target_os = "macos")]
+            watch_app_input(app.handle());
+            // The vault is not open yet, so no profile is open. Each open of the profile makes the link from its
+            // data store of WebKit (`docs/DISCUSSION.md` §54).
+            #[cfg(target_os = "macos")]
+            {
+                app.manage(Ramdisk(Mutex::new(Some(ramdisk))));
+                let stores = webkit_stores(&app.config().identifier);
+                app.state::<Mutex<Session>>()
+                    .lock()
+                    .expect("the session is not poisoned at the start")
+                    .set_store_links(stores);
+            }
             // The thread of the unread state. The handlers of the windows send their changes to it.
             let handle = app.handle().clone();
             std::thread::spawn(move || unread_worker(handle, unread_receiver));
@@ -1085,11 +1219,21 @@ fn main() {
             close_account_windows(app);
             telegram_stop(app);
             let state = app.state::<Mutex<Session>>();
-            if let Ok(mut session) = state.lock()
-                && let Err(error) = session.lock()
-            {
-                eprintln!("panim: the browser profile was not sealed: {}", error.detail);
+            let sealed = match state.lock().map(|mut session| session.lock()) {
+                Ok(Ok(())) => true,
+                Ok(Err(error)) => {
+                    eprintln!("panim: the browser profile was not sealed: {}", error.detail);
+                    false
+                }
+                Err(_) => false,
+            };
+            // Detach the RAM disk only after the lock sealed its folders. Otherwise, the open folders stay on it.
+            #[cfg(target_os = "macos")]
+            if sealed {
+                detach_ramdisk(app);
             }
+            #[cfg(not(target_os = "macos"))]
+            let _ = sealed;
         }
     });
 }
@@ -1215,7 +1359,9 @@ mod acl {
                 invoke.resolver.resolve(());
                 true
             })
-            .build(tauri::generate_context!())
+            // `test = true` stops the second copy of the symbol `_EMBED_INFO_PLIST` on macOS. Without it, the test
+            // binary does not link, because `main` already has this symbol. On Linux, it changes nothing.
+            .build(tauri::generate_context!(test = true))
             .expect("the mock app")
     }
 

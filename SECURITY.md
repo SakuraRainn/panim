@@ -16,7 +16,7 @@ If the button "Report a vulnerability" is not there, open an issue with the form
 
 ## What to put in the report
 
-- The version of PANIM, and the method of installation (AppImage or Nix).
+- The version of PANIM, and the method of installation (the `.deb`, the `.rpm`, the AppImage or Nix).
 - Your system, for example "Fedora 43, x86_64".
 - What an attacker can do, and what the attacker must have first. For example: access to the files, a page in a browser view, or a position on the network.
 - The steps to show the problem. A small test is better than a long text.
@@ -53,6 +53,6 @@ These limits are known. `docs/DESIGN.md` and `docs/ARCHITECTURE.md` tell more.
 - **The platforms.** Telegram knows the phone number of each account. An own `api_id` of Telegram links the personas that use it. A platform can see what you do on it.
 - **The recovery words and the key file.** A person who has your 12 recovery words, or your key file and its password, can open your vault and sign as your persona.
 - **A backup.** A backup has the browser logins and the Telegram sessions. It is sealed, but it opens with your passcode, your words or your key file.
-- **The Telegram app values of PANIM.** The AppImage has them, so any person who has the AppImage can read them. This is true for all the apps that have an `api_id`.
+- **The Telegram app values of PANIM.** The `.deb`, the `.rpm` and the AppImage have them, so any person who has one of these packages can read them. This is true for all the apps that have an `api_id`.
 
 A vulnerability in a platform (GitHub, Telegram, X, Discord, Proton) goes to that platform. A vulnerability in a library (for example WebKitGTK or TDLib) goes to its project. If PANIM uses a library in a way that is not safe, report it to PANIM.

@@ -58,6 +58,16 @@ const COMMANDS: &[&str] = &[
 ];
 
 fn main() {
+    // The run path of `libtdjson` from the build script of `panim-telegram`. Without it, the binary and the tests
+    // find the library only through `LD_LIBRARY_PATH` or the compiler wrapper of Nix.
+    println!("cargo:rerun-if-env-changed=DEP_TDJSON_RPATH");
+    if std::env::var("CARGO_CFG_TARGET_FAMILY").as_deref() == Ok("unix")
+        && let Ok(rpath) = std::env::var("DEP_TDJSON_RPATH")
+    {
+        for entry in rpath.split(':').filter(|entry| !entry.is_empty()) {
+            println!("cargo:rustc-link-arg=-Wl,-rpath,{entry}");
+        }
+    }
     tauri_build::try_build(
         tauri_build::Attributes::new().app_manifest(tauri_build::AppManifest::new().commands(COMMANDS)),
     )

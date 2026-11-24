@@ -1,7 +1,7 @@
 # Writes the checksums of a release of PANIM and signs them with minisign (`README.md`, "Check a download").
 #
-# Run it from the repository: nix run .#release -- --version 0.1.0 --ref v0.1.0 --key ~/.minisign/panim.key \
-#   --out /path/to/folder [--artifact /path/to/PANIM-0.1.0-x86_64.AppImage] [--pubkey /path/to/minisign.pub]
+# Run it from the repository: nix run .#release -- --version 0.2.0 --ref v0.2.0 --key ~/.minisign/panim.key \
+#   --out /path/to/folder [--artifact /path/to/PANIM_0.2.0_amd64.AppImage]... [--pubkey /path/to/minisign.pub]
 #
 # 1. It makes the source snapshot `panim-<version>-source.tar.gz` from the Git ref, with `git archive`.
 # 2. It copies each artifact into the output folder.
