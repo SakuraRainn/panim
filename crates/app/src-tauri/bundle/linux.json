@@ -1,0 +1,23 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "active": true,
+    "targets": ["deb", "rpm", "appimage"],
+    "category": "SocialNetworking",
+    "shortDescription": "A desktop persona manager",
+    "linux": {
+      "deb": {
+        "depends": ["libssl3t64 | libssl3", "zlib1g", "libsqlite3-0"],
+        "files": {
+          "/usr/lib/panim/libtdjson.so.1.8.68": "../../../target/tdlib/lib/libtdjson.so.1.8.68"
+        }
+      },
+      "rpm": {
+        "depends": ["libssl.so.3()(64bit)", "libcrypto.so.3()(64bit)", "libz.so.1()(64bit)", "libsqlite3.so.0()(64bit)"],
+        "files": {
+          "/usr/lib/panim/libtdjson.so.1.8.68": "../../../target/tdlib/lib/libtdjson.so.1.8.68"
+        }
+      }
+    }
+  }
+}

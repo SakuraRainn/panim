@@ -1,7 +1,15 @@
 //! The build script of the Telegram connector. It does two tasks.
 //!
-//! 1. It finds `libtdjson.so` through pkg-config (`tdjson.pc`) and tells the linker where the library is. The dev
-//!    shell of `flake.nix` supplies the TDLib of PANIM, with the patch `nix/tdlib-no-direct.patch`.
+//! 1. It finds `libtdjson` through pkg-config (`tdjson.pc`) and tells the linker where the library is. The dev
+//!    shell of `flake.nix` supplies the TDLib of PANIM, with the patch `nix/tdlib-no-direct.patch`. Without Nix,
+//!    `scripts/build-tdlib.sh` builds the same TDLib with the same patch. Then `PKG_CONFIG_PATH` must contain its
+//!    `lib/pkgconfig` folder.
+//!
+//!    The script also sets the run path, so that the program finds the library without `LD_LIBRARY_PATH`. By
+//!    default, the run path is the folder of the library. `PANIM_TDJSON_RPATH` replaces it, for example with
+//!    `$ORIGIN/../lib/panim` for a package (`scripts/build-packages.sh`). The value is a list with `:` between the
+//!    entries. Cargo gives the run path to the crate `panim` as `DEP_TDJSON_RPATH` (the key `links` in
+//!    `Cargo.toml`), because a link argument of this crate does not go to the binaries of other crates.
 //! 2. It reads the `api_id` and the `api_hash` of PANIM at compile time and writes them to a Rust file in `OUT_DIR`.
 //!    The environment has priority (`PANIM_TELEGRAM_API_ID`, `PANIM_TELEGRAM_API_HASH`). If a value is not there,
 //!    the script reads `~/.config/panim/telegram.env`. `PANIM_TELEGRAM_ENV` can name a different file. An empty
@@ -18,17 +26,33 @@ use std::{env, fs};
 const ID: &str = "PANIM_TELEGRAM_API_ID";
 const HASH: &str = "PANIM_TELEGRAM_API_HASH";
 const FILE: &str = "PANIM_TELEGRAM_ENV";
+const RPATH: &str = "PANIM_TDJSON_RPATH";
 
 fn main() {
     let library = pkg_config::Config::new()
         .atleast_version("1.8.68")
         .probe("tdjson")
-        .expect("pkg-config finds tdjson. Run the build in the shell of `nix develop`");
-    // Put the folder of the library into the run path of the binary. Thus, the program finds `libtdjson.so`
-    // without `LD_LIBRARY_PATH`. The compiler wrapper of Nix does the same for a path in the Nix store.
-    for dir in &library.link_paths {
-        println!("cargo:rustc-link-arg=-Wl,-rpath,{}", dir.display());
+        .expect(
+            "pkg-config must find tdjson (`tdjson.pc`). The shell of `nix develop` supplies it. Without Nix, run \
+             `scripts/build-tdlib.sh`, and add its `lib/pkgconfig` folder to `PKG_CONFIG_PATH`",
+        );
+    // Put the run path into the test binaries of this crate. Thus, they find `libtdjson` without
+    // `LD_LIBRARY_PATH`. The compiler wrapper of Nix does the same for a path in the Nix store.
+    println!("cargo:rerun-if-env-changed={RPATH}");
+    let rpath = match env::var(RPATH) {
+        Ok(rpath) if !rpath.is_empty() => rpath,
+        _ => library
+            .link_paths
+            .iter()
+            .map(|dir| dir.display().to_string())
+            .collect::<Vec<_>>()
+            .join(":"),
+    };
+    for entry in rpath.split(':').filter(|entry| !entry.is_empty()) {
+        println!("cargo:rustc-link-arg=-Wl,-rpath,{entry}");
     }
+    // The crate `panim` reads this value as `DEP_TDJSON_RPATH`.
+    println!("cargo:rpath={rpath}");
 
     println!("cargo:rerun-if-env-changed={ID}");
     println!("cargo:rerun-if-env-changed={HASH}");

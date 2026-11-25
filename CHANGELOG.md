@@ -2,6 +2,30 @@
 
 All the changes of PANIM that a user can see are in this file. The versions use semantic versioning.
 
+## 0.2.0 (2026-11-24)
+
+This release adds macOS. It also changes the Linux packages.
+
+### New
+
+- **PANIM on macOS.** The `.dmg` is for a Mac with Apple silicon and macOS 14 or later. PANIM on macOS has the same features as on Linux.
+  - PANIM keeps its data in `~/Library/Application Support/panim`.
+  - While PANIM runs, it keeps the open browser profiles and the Telegram folders on a RAM disk. Quit PANIM with Cmd+Q, so that it seals the data and removes the RAM disk.
+  - The `.dmg` has no signature of Apple. The first time, open PANIM through System Settings > Privacy & Security (`README.md`).
+- **New Linux packages.** Release 0.2.0 has a `.deb` (Ubuntu, Debian), an `.rpm` (Fedora) and a new AppImage.
+  - The packages need glibc 2.39 or later. Ubuntu 22.04 and Debian 12 cannot start them.
+  - The new AppImage needs no user namespace and no AppArmor profile. It uses FUSE 3. Without FUSE 3, it unpacks itself and starts.
+
+### Changes
+
+- **The AppImage of Nix stops.** Releases 0.1.0 to 0.1.3 published it. If you use Nix, build PANIM from the flake, as before.
+- If you made the AppArmor profile for the AppImage of 0.1.x, you can remove it (`README.md`, "The AppImage").
+
+### Known limits
+
+- The `.dmg` is only for Apple silicon, and it has no signature of Apple.
+- The known limits of 0.1.3 do not change.
+
 ## 0.1.3 (2026-11-19)
 
 This release has no new feature. It changes how PANIM seals the open browser profile and the Telegram folders.

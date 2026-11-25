@@ -528,6 +528,8 @@ pub struct Session {
     github: GitHubState,
     /// The state of the Telegram connector. It is in memory only.
     telegram: telegram::State,
+    /// The folder of the data stores of WebKit on macOS (`set_store_links`). `None` on Linux.
+    store_links: Option<PathBuf>,
 }
 
 impl Session {
@@ -546,7 +548,18 @@ impl Session {
             unread: UnreadTable::default(),
             github: GitHubState::default(),
             telegram: telegram::State::default(),
+            store_links: None,
         }
+    }
+
+    /// Makes a link from the data store of WebKit to the open browser profile (macOS, `docs/DISCUSSION.md` §54).
+    ///
+    /// `base` is the folder of the data stores, `~/Library/WebKit/<bundle id>/WebsiteDataStore`. After this call,
+    /// each open of the profile makes the place of its store (`store_place`) a symbolic link to the open folder in
+    /// the area. Each close of the profile deletes the link. Call it before the vault opens. Linux does not use it.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub fn set_store_links(&mut self, base: PathBuf) {
+        self.store_links = Some(base);
     }
 
     pub fn status(&self) -> AppResult<Status> {
@@ -1093,6 +1106,16 @@ impl Session {
         Ok((profile, open.persona.route.clone()))
     }
 
+    /// The identifier of the data store of the open browser profile. A browser window on macOS uses it
+    /// (`data_store_identifier`). Linux does not use it.
+    pub fn profile_store_id(&self) -> AppResult<[u8; 16]> {
+        let open = self.open_ref()?;
+        if open.profile.is_none() {
+            return Err(AppError::new("io", "the browser profile is not open"));
+        }
+        Ok(store_id(&open.vault.area_name(), &open.persona.profile_folder()))
+    }
+
     /// Tells if the vault is open and `profile` is its open browser profile folder.
     ///
     /// A new browser window uses it after the build: the lock can occur between `profile_target` and the build.
@@ -1583,7 +1606,15 @@ impl Session {
             Seal::Always => self.area.seal(&open.vault, &folder)?,
             Seal::Close => {
                 open.profile = None;
-                self.area.close(&open.vault, &folder)?;
+                let closed = self.area.close(&open.vault, &folder);
+                // Delete the link also if the close failed. Then the open folder stays in the area, and the next
+                // open replaces the folder and the link. WebKit cannot write through the link after this.
+                let unlinked = match &self.store_links {
+                    Some(base) => remove_place(&store_place(base, &store_id(&open.vault.area_name(), &folder))),
+                    None => Ok(()),
+                };
+                closed?;
+                unlinked?;
             }
         }
         Ok(())
@@ -1591,7 +1622,13 @@ impl Session {
 
     fn open_profile(&mut self) -> AppResult<()> {
         let open = self.open.as_mut().expect("the vault is open");
-        let path = self.area.open(&open.vault, &open.persona.profile_folder())?;
+        let folder = open.persona.profile_folder();
+        let path = self.area.open(&open.vault, &folder)?;
+        // Make the link before the profile is open. If the link fails, no browser window can open, so WebKit does
+        // not write the store as plain files on the disk.
+        if let Some(base) = &self.store_links {
+            link_store(base, &store_id(&open.vault.area_name(), &folder), &path)?;
+        }
         open.profile = Some(path);
         Ok(())
     }
@@ -1607,6 +1644,67 @@ impl Session {
             .as_mut()
             .ok_or_else(|| AppError::new("locked", "the vault is locked"))
     }
+}
+
+/// The identifier of the data store of WebKit for a profile folder of a vault (`docs/DISCUSSION.md` §54).
+///
+/// The identifier is the first 16 bytes of SHA-256 of a label, the area name of the vault and the folder. It is the
+/// same at each start, and different for each vault and each folder. It is not a secret. The function sets the
+/// bits of a UUID of version 8 (RFC 9562), because WebKit keeps the store in a folder with the name of a UUID.
+fn store_id(area_name: &str, folder: &str) -> [u8; 16] {
+    use sha2::{Digest, Sha256};
+    let mut hash = Sha256::new();
+    hash.update(b"panim-webkit-store/1\0");
+    hash.update(area_name.as_bytes());
+    hash.update(b"\0");
+    hash.update(folder.as_bytes());
+    let digest = hash.finalize();
+    let mut id = [0u8; 16];
+    id.copy_from_slice(&digest[..16]);
+    id[6] = (id[6] & 0x0f) | 0x80;
+    id[8] = (id[8] & 0x3f) | 0x80;
+    id
+}
+
+/// The text of an identifier as WebKit writes it in the name of a folder: a UUID in lowercase, with hyphens.
+fn uuid_text(id: &[u8; 16]) -> String {
+    let hex: String = id.iter().map(|b| format!("{b:02x}")).collect();
+    format!(
+        "{}-{}-{}-{}-{}",
+        &hex[..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..]
+    )
+}
+
+/// The place of the data store of an identifier: `<base>/<uuid>`.
+fn store_place(base: &Path, id: &[u8; 16]) -> PathBuf {
+    base.join(uuid_text(id))
+}
+
+/// Makes the place of a data store a symbolic link to the open profile folder `target`.
+///
+/// If a link, a folder or a file is at the place, the function deletes it first. A crash can leave it there.
+fn link_store(base: &Path, id: &[u8; 16], target: &Path) -> AppResult<()> {
+    fs::create_dir_all(base).map_err(|e| AppError::new("io", e))?;
+    let place = store_place(base, id);
+    remove_place(&place)?;
+    std::os::unix::fs::symlink(target, &place).map_err(|e| AppError::new("io", e))
+}
+
+/// Deletes the link, the folder or the file at `place`. It is not an error if nothing is there.
+///
+/// The function does not follow a link. It deletes the link, and the target of the link stays.
+fn remove_place(place: &Path) -> AppResult<()> {
+    let result = match fs::symlink_metadata(place) {
+        Ok(meta) if meta.is_dir() => fs::remove_dir_all(place),
+        Ok(_) => fs::remove_file(place),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
+    };
+    result.map_err(|e| AppError::new("io", e))
 }
 
 /// Keeps the first error of a sync. A refused token replaces a different error, so that the account gets the mark.
@@ -1812,6 +1910,119 @@ pub(crate) mod tests {
         session.lock().unwrap();
         assert!(!session.profile_is_open(&profile));
         assert_eq!(session.profile_target().unwrap_err().code, "locked");
+    }
+
+    #[test]
+    fn the_store_id_is_stable_and_a_uuid_of_version_8() {
+        let id = store_id("0123456789abcdef", "persona-1");
+        assert_eq!(id, store_id("0123456789abcdef", "persona-1"));
+        assert_ne!(id, store_id("fedcba9876543210", "persona-1"));
+        assert_ne!(id, store_id("0123456789abcdef", "persona-2"));
+        // The separator prevents the same input from two different pairs.
+        assert_ne!(store_id("ab", "c"), store_id("a", "bc"));
+        assert_eq!(id[6] >> 4, 8);
+        assert_eq!(id[8] >> 6, 0b10);
+        let text = uuid_text(&id);
+        assert_eq!(text.len(), 36);
+        assert_eq!(text, text.to_lowercase());
+        let parts: Vec<usize> = text.split('-').map(str::len).collect();
+        assert_eq!(parts, [8, 4, 4, 4, 12]);
+        assert_eq!(&text[14..15], "8");
+    }
+
+    #[test]
+    fn the_uuid_text_has_the_order_of_the_bytes() {
+        let id: [u8; 16] = std::array::from_fn(|i| i as u8);
+        assert_eq!(uuid_text(&id), "00010203-0405-0607-0809-0a0b0c0d0e0f");
+    }
+
+    /// A session that makes the links of the data stores in `stores`.
+    fn linked_session(f: &Fixture, stores: &Path) -> Session {
+        let mut session = f.session();
+        session.set_store_links(stores.to_path_buf());
+        session
+    }
+
+    fn store_of(session: &Session, stores: &Path) -> PathBuf {
+        store_place(stores, &session.profile_store_id().unwrap())
+    }
+
+    #[test]
+    fn the_open_profile_gets_a_link_from_its_store_and_the_lock_deletes_it() {
+        let f = Fixture::new();
+        let stores = tempfile::tempdir().unwrap();
+        // The folder of the stores does not exist yet. The open makes it.
+        let base = stores.path().join("WebKit/id/WebsiteDataStore");
+        let mut session = linked_session(&f, &base);
+        session.create("passcode1").unwrap();
+        let (profile, _) = session.profile_target().unwrap();
+        let place = store_of(&session, &base);
+        assert!(fs::symlink_metadata(&place).unwrap().file_type().is_symlink());
+        assert_eq!(fs::read_link(&place).unwrap(), profile);
+        // WebKit writes through the link into the open folder.
+        fs::write(place.join("cookies"), "session=alice").unwrap();
+        assert_eq!(fs::read_to_string(profile.join("cookies")).unwrap(), "session=alice");
+        session.lock().unwrap();
+        assert!(fs::symlink_metadata(&place).is_err());
+        assert!(!profile.exists());
+        // The seal kept the file of WebKit.
+        session.unlock("passcode1").unwrap();
+        let place = store_of(&session, &base);
+        assert_eq!(fs::read_to_string(place.join("cookies")).unwrap(), "session=alice");
+    }
+
+    #[test]
+    fn the_open_replaces_a_folder_at_the_place_of_the_store() {
+        let f = Fixture::new();
+        let stores = tempfile::tempdir().unwrap();
+        let mut session = linked_session(&f, stores.path());
+        session.create("passcode1").unwrap();
+        let place = store_of(&session, stores.path());
+        session.lock().unwrap();
+        // After a crash, WebKit can make a real folder at the place.
+        fs::create_dir_all(place.join("LocalStorage")).unwrap();
+        fs::write(place.join("LocalStorage/plain"), "plain").unwrap();
+        session.unlock("passcode1").unwrap();
+        let (profile, _) = session.profile_target().unwrap();
+        assert!(fs::symlink_metadata(&place).unwrap().file_type().is_symlink());
+        assert_eq!(fs::read_link(&place).unwrap(), profile);
+        assert!(!profile.join("LocalStorage/plain").exists());
+    }
+
+    #[test]
+    fn the_open_replaces_a_file_or_an_old_link_and_keeps_the_target_of_the_link() {
+        let f = Fixture::new();
+        let stores = tempfile::tempdir().unwrap();
+        let mut session = linked_session(&f, stores.path());
+        session.create("passcode1").unwrap();
+        let place = store_of(&session, stores.path());
+        session.lock().unwrap();
+
+        fs::write(&place, "a file").unwrap();
+        session.unlock("passcode1").unwrap();
+        let (profile, _) = session.profile_target().unwrap();
+        assert_eq!(fs::read_link(&place).unwrap(), profile);
+        session.lock().unwrap();
+
+        let other = tempfile::tempdir().unwrap();
+        fs::write(other.path().join("keep"), "keep").unwrap();
+        std::os::unix::fs::symlink(other.path(), &place).unwrap();
+        session.unlock("passcode1").unwrap();
+        let (profile, _) = session.profile_target().unwrap();
+        assert_eq!(fs::read_link(&place).unwrap(), profile);
+        assert_eq!(fs::read_to_string(other.path().join("keep")).unwrap(), "keep");
+    }
+
+    #[test]
+    fn without_store_links_the_session_makes_no_link() {
+        let f = Fixture::new();
+        let stores = tempfile::tempdir().unwrap();
+        let mut session = f.session();
+        session.create("passcode1").unwrap();
+        assert!(!store_of(&session, stores.path()).exists());
+        assert_eq!(fs::read_dir(stores.path()).unwrap().count(), 0);
+        session.lock().unwrap();
+        assert_eq!(session.profile_store_id().unwrap_err().code, "locked");
     }
 
     /// The periodic seal of the browser profile does not occur when no file changed. The other seals always occur.

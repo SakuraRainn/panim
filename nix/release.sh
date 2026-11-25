@@ -1,7 +1,9 @@
 # Writes the checksums of a release of PANIM and signs them with minisign (`README.md`, "Check a download").
 #
-# Run it from the repository: nix run .#release -- --version 0.1.0 --ref v0.1.0 --key ~/.minisign/panim.key \
-#   --out /path/to/folder [--artifact /path/to/PANIM-0.1.0-x86_64.AppImage] [--pubkey /path/to/minisign.pub]
+# Run it from the repository: nix run .#release -- --version 0.2.0 --ref v0.2.0 --key ~/.minisign/panim.key \
+#   --out /path/to/folder [--artifact /path/to/PANIM_0.2.0_amd64.AppImage]... [--pubkey /path/to/minisign.pub]
+#
+# The version has the form X.Y.Z for a release, or X.Y.Z-rc.N for a release candidate (for example 0.2.0-rc.1).
 #
 # 1. It makes the source snapshot `panim-<version>-source.tar.gz` from the Git ref, with `git archive`.
 # 2. It copies each artifact into the output folder.
@@ -12,7 +14,7 @@
 # The secret key must be outside the repository. The script never makes or copies a key.
 
 usage() {
-  echo "usage: panim-release --version X.Y.Z --ref REF --key SECRET_KEY --out FOLDER [--artifact FILE]... [--pubkey PUBLIC_KEY]" >&2
+  echo "usage: panim-release --version X.Y.Z[-rc.N] --ref REF --key SECRET_KEY --out FOLDER [--artifact FILE]... [--pubkey PUBLIC_KEY]" >&2
   exit 2
 }
 
@@ -35,8 +37,8 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$version" ] && [ -n "$ref" ] && [ -n "$key" ] && [ -n "$out" ] || usage
 
-if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "the version must have the form X.Y.Z" >&2
+if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]]; then
+  echo "the version must have the form X.Y.Z or X.Y.Z-rc.N" >&2
   exit 2
 fi
 

@@ -30,8 +30,9 @@ body:
     attributes:
       label: Installation
       options:
+        - .deb
+        - .rpm
         - AppImage
-        - AppImage with --appimage-extract-and-run
         - Nix (nix run or nix build)
         - A different method (tell it below)
     validations:

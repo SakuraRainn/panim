@@ -21,11 +21,14 @@
 //! under the name of the database, and it does not hold the `-wal`, `-shm` or `-journal` file of that database. The
 //! format of the archive does not change.
 //!
-//! The seal uses the SQLite library of the system (`libsqlite3.so`), not a SQLite in the binary (`bundled`).
-//! WebKitGTK and other libraries in the process of PANIM load `libsqlite3.so` too. With a second SQLite in the
+//! On Linux, the seal uses the SQLite library of the system (`libsqlite3.so`), not a SQLite in the binary
+//! (`bundled`). WebKitGTK and other libraries in the process of PANIM load `libsqlite3.so` too. With a second SQLite in the
 //! binary, the binary gives some SQLite functions to these libraries and not others, so that a library uses parts of
 //! two different SQLite copies. Also, two SQLite copies in one process remove the POSIX locks of each other. One
 //! SQLite in the process prevents these problems.
+//!
+//! On macOS, the seal uses the bundled SQLite, because the SQLite of macOS is older than 3.44. WebKit on macOS keeps
+//! its databases in its own processes, so these problems do not occur there (`docs/DISCUSSION.md` §56).
 
 use std::collections::HashMap;
 use std::ffi::OsString;

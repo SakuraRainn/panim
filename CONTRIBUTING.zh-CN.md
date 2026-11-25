@@ -23,7 +23,16 @@
 
 ## 构建和测试
 
-PANIM 在 Linux 上用 Nix 构建。flake 提供 Rust 工具链、WebKitGTK、Node.js、pnpm、PANIM 的 TDLib 和其他库。不需要 rustup。所有步骤都在 `nix develop` 的 shell 中进行。
+在 Linux 上可以用两种方式构建 PANIM：
+
+- **用 Nix。** flake 提供所有工具和库。维护者用这种构建进行开发。Nix 用户可以从 flake 安装 PANIM。
+- **不用 Nix。** 库来自你的系统，Rust 来自 rustup，一个脚本构建 PANIM 版 TDLib。发布的安装包来自这种构建，在容器中进行（`docker/check.sh`）。
+
+两种方式使用同一个 TDLib 补丁 `nix/tdlib-no-direct.patch`。没有这个补丁，TDLib 可能建立不经过身份代理的连接。
+
+### 用 Nix 构建
+
+flake 提供 Rust 工具链、WebKitGTK、Node.js、pnpm、PANIM 的 TDLib 和其他库。不需要 rustup。所有步骤都在 `nix develop` 的 shell 中进行。
 
 1. 在仓库根目录运行 `nix develop`。第一次运行时，Nix 会构建带补丁的 PANIM 版 TDLib。这大约需要 10 分钟或更长时间。
 2. 在 `crates/app` 中运行 `pnpm install`。
@@ -32,6 +41,40 @@ PANIM 在 Linux 上用 Nix 构建。flake 提供 Rust 工具链、WebKitGTK、No
 5. 在 `crates/app` 中运行 `pnpm check`。如果某种语言缺少文本，它会失败。
 6. 要以开发模式启动应用，在 `crates/app` 中运行 `pnpm tauri dev`。
 7. 要构建软件包，在根目录运行 `nix build`。结果是 `result/bin/panim`。
+
+### 不用 Nix 构建
+
+以下步骤适用于 Ubuntu 24.04。在其他系统上，用它的包管理器安装相同的库。不要在 `nix develop` 的 shell 中进行这些步骤。
+
+1. 安装系统软件包：
+
+   ```
+   sudo apt install build-essential cmake gperf curl file pkg-config libssl-dev zlib1g-dev libsqlite3-dev \
+     libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev librsvg2-dev libxdo-dev libayatana-appindicator3-dev
+   ```
+
+2. 安装 rustup（https://rustup.rs）。在仓库中，rustup 使用 `rust-toolchain.toml` 中的 Rust 版本。
+3. 在仓库中运行 `rustup component add clippy rustfmt`。
+4. 安装 Node.js 24 和 pnpm。
+5. 在根目录运行 `scripts/build-tdlib.sh`。这大约需要 10 分钟或更长时间。
+   - 脚本下载 TDLib 的源代码，并检查它的 SHA-256。
+   - 它应用 `nix/tdlib-no-direct.patch`，并在 `target/tdlib` 中构建 `libtdjson`。
+6. 告诉 pkg-config TDLib 的位置。每个新的 shell 都要做一次：
+
+   ```
+   export PKG_CONFIG_PATH="$PWD/target/tdlib/lib/pkgconfig"
+   ```
+
+7. 进行“用 Nix 构建”的第 2 到 6 步。
+8. 要构建软件包，在根目录运行 `scripts/build-packages.sh`。结果是 `target/release/bundle` 中的 `.deb`、`.rpm` 和 AppImage。
+
+`cargo build` 构建的程序在 `target/tdlib/lib` 中找到 `libtdjson`。`.deb` 和 `.rpm` 把 `libtdjson` 放到 `/usr/lib/panim`，程序在那里找到它。AppImage 把 `libtdjson` 放在它的 `usr/lib` 中。
+
+`docker/check.sh` 在一个干净的 Ubuntu 24.04 容器中进行以上所有步骤。然后它在 Ubuntu 中安装 `.deb`，在 Fedora 中安装 `.rpm`，并在 Xvfb 中启动 PANIM。它需要 Docker 或 rootless Podman（`CONTAINER_ENGINE`）。`TDLIB_JOBS` 设置 TDLib 构建的任务数。每个任务大约需要 2 GB 内存。输出在 `target/container` 中。
+
+这两个脚本也包含 macOS 的步骤。只有 GitHub 的 macOS 运行器运行过它们（`.github/workflows/macos-check.yml` 和 `macos-release.yml`）。还没有人在 Mac 上测试过。
+
+### 测试数据和测试
 
 把 `PANIM_DATA` 设为一个测试文件夹。这样，测试或开发启动不会使用你在 `~/.local/share/panim` 中的真实数据。
 
@@ -49,6 +92,8 @@ Telegram 通过应用参数识别每个应用：一个 `api_id` 和一个 `api_h
 - `panim-telegram` 的构建从 `PANIM_TELEGRAM_API_ID` 和 `PANIM_TELEGRAM_API_HASH` 读取参数，或者从文件 `~/.config/panim/telegram.env` 读取。
 - 没有参数时，构建仍然成功。这时应用会在设置中要求用户填写自己的参数。
 - 要在没有参数的情况下构建，把 `PANIM_TELEGRAM_ENV` 设为空文本。
+- `docker/check.sh --values FILE` 用 FILE 中的参数制作发布的安装包（见“制作发布版本”一节）。构建容器只以只读方式读取 FILE。脚本永远不会打印这些参数。
+- 工作流 `macos-release.yml` 用开发仓库的两个 secret 中的参数制作发布的 `.dmg`。它永远不会打印这些参数。
 - 测试不需要这些参数。
 
 永远不要把 Telegram 参数放进仓库、issue 或日志中。永远不要打印它们。如果你用自己的参数做测试，把它们放在 `~/.config/panim/telegram.env` 或环境变量中。
@@ -114,8 +159,11 @@ PANIM 处于第 1 步（`docs/DESIGN.md` §3）。第 1 步中每个人只有一
 - `nix/` 包含软件包、补丁和发布脚本：
   - `package.nix` 是 Nix 软件包。
   - `tdlib-no-direct.patch` 是 PANIM 版 TDLib 的补丁。文件中说明了每处修改。
-  - `appimage-apprun-store.patch` 和 `appimage-apprun-userns-help.patch` 是 AppImage 的 `AppRun` 的补丁。
   - `release.sh` 写入并签名发布版本的校验和。`publish.sh` 制作发布版本的公开提交。
+- `scripts/` 包含不用 Nix 构建的脚本：
+  - `build-tdlib.sh` 用 `nix/` 中的补丁构建 PANIM 版 TDLib。
+  - `build-packages.sh` 用 Tauri 的打包工具构建软件包。`crates/app/src-tauri/bundle/` 包含 Linux 和 macOS 的打包设置。
+- `docker/` 包含在容器中检查不用 Nix 的构建的脚本（`check.sh`）。
 - `.github/ISSUE_TEMPLATE/` 包含公开仓库的 issue 表单。
 - `README.zh-CN.md`、`CONTRIBUTING.zh-CN.md` 和 `SECURITY.zh-CN.md` 是三个公开文档的中文版。
 - `flake.nix` 是 Nix flake。`rust-toolchain.toml` 设置 Rust 版本。开发 shell 和 Nix 软件包都使用这个版本。
@@ -123,7 +171,7 @@ PANIM 处于第 1 步（`docs/DESIGN.md` §3）。第 1 步中每个人只有一
 ## 报告问题
 
 - 在 https://github.com/SakuraRainn/panim/issues 开一个 issue，选择问题报告表单或提问表单。
-- 写明 PANIM 的版本、你的系统、安装方式（AppImage 或 Nix）、操作步骤和结果。
+- 写明 PANIM 的版本、你的系统、安装方式（`.deb`、`.rpm`、AppImage 或 Nix）、操作步骤和结果。
 - 不要在 issue 中写口令、找回词、密钥文件、令牌或 Telegram 参数。
 - 安全漏洞不要开公开的 issue。请阅读 `SECURITY.zh-CN.md`。
 
@@ -145,33 +193,65 @@ PANIM 处于第 1 步（`docs/DESIGN.md` §3）。第 1 步中每个人只有一
 
 ## 制作发布版本
 
-以下是维护者的步骤。在开发仓库中、在 `nix develop` 的 shell 中进行。
+以下是维护者的步骤。在开发仓库中进行。`nix` 命令在 `nix develop` 的 shell 中运行。
+
+在第一个包含 macOS 的发布版本之前，做一次以下设置：为开发仓库添加工作流 `macos-release.yml` 需要的两个 secret：
+
+```
+gh secret set PANIM_TELEGRAM_API_ID
+gh secret set PANIM_TELEGRAM_API_HASH
+```
+
+每个命令都会询问参数，并从标准输入读取它。不要在命令行中给出参数（例如用 `--body`），因为 shell 历史会保存它。
 
 1. 修改所有 `Cargo.toml` 文件、`crates/app/package.json`、`crates/app/src-tauri/tauri.conf.json` 和 `Cargo.lock` 中的版本。在 `CHANGELOG.md` 中写入该版本的条目。
 2. 确认所有测试都通过。提交修改，并创建标签 `v<version>`。
-3. 把 PANIM 的 Telegram 参数放入环境变量，不要放进仓库：
+3. 在一个干净的工作区中检出标签 `v<version>`。删除文件夹 `target/container` 和 `target/macos`，这样里面不会有旧版本的安装包。
+4. 构建带 PANIM 的 Telegram 参数的安装包。这一步需要 Docker 或 rootless Podman：
+
+   ```
+   docker/check.sh all --values ~/.config/panim/telegram.env
+   ```
+
+   - 第一次运行大约需要 30 分钟。
+   - 如果工作区有修改，或者 `HEAD` 没有与 `tauri.conf.json` 版本一致的标签 `v<version>`，脚本会拒绝启动。
+   - 构建容器只以只读方式读取参数文件。镜像、报告和日志中都没有这些参数。
+   - 构建、参数检查和安装检查都必须通过。安装包在 `target/container/packages` 中。
+   - 这时参数会进入每个安装包的二进制文件中。
+5. 在 GitHub 的 macOS 运行器上构建 macOS 的 `.dmg`。macOS 的一分钟大约相当于 Linux 的 10 分钟，所以只运行一次。推送标签，并把它的提交推送到分支 `macos-release`：
+
+   ```
+   git push --atomic origin v<version> '+v<version>^{commit}:refs/heads/macos-release'
+   gh run list --workflow macos-release.yml --limit 1
+   gh run watch <run>
+   gh run download <run> -n macos-release-dmg -D target/macos
+   sha256sum target/macos/PANIM_<version>_aarch64.dmg
+   ```
+
+   - `^{commit}` 是必需的，因为 GitHub 不接受附注标签（annotated tag）作为分支的值。
+   - 如果提交没有与 `tauri.conf.json` 版本一致的标签 `v<version>` 或 `v<version>-rc.<n>`，工作流会拒绝它。
+   - 一次运行大约需要 30 分钟。分支上的第一次运行还要构建 TDLib，大约多需要 20 分钟。
+   - 运行中的所有检查都必须通过。把 SHA-256 与运行摘要页面中的 `SHA256` 行比较。
+6. 用私钥写入并签名校验和。私钥保存在仓库之外：
+
+   ```
+   nix run .#release -- --version <version> --ref v<version> --key ~/.minisign/panim.key \
+     --out /path/to/release \
+     --artifact target/container/packages/PANIM_<version>_amd64.deb \
+     --artifact target/container/packages/PANIM-<version>-1.x86_64.rpm \
+     --artifact target/container/packages/PANIM_<version>_amd64.AppImage \
+     --artifact target/macos/PANIM_<version>_aarch64.dmg \
+     --pubkey ~/.minisign/panim.pub
+   ```
+
+7. 把公开仓库克隆到一个新文件夹：`git clone https://github.com/SakuraRainn/panim /path/to/panim-public`。
+8. 把 PANIM 的 Telegram 参数放入环境变量，不要放进仓库。这样下一步的脚本可以确认 `api_hash` 不在提交中：
 
    ```
    set -a; . ~/.config/panim/telegram.env; set +a
    ```
 
-4. 从该标签构建带参数的 AppImage：
-
-   ```
-   nix build --impure .#appimage-release
-   ```
-
-   这时参数会进入这台电脑的 Nix store 和二进制文件中。
-5. 把 AppImage 复制到 Nix store 之外：`cp result PANIM-<version>-x86_64.AppImage`。
-6. 用私钥写入并签名校验和。私钥保存在仓库之外：
-
-   ```
-   nix run .#release -- --version <version> --ref v<version> --key ~/.minisign/panim.key \
-     --out /path/to/release --artifact PANIM-<version>-x86_64.AppImage --pubkey ~/.minisign/panim.pub
-   ```
-
-7. 把公开仓库克隆到一个新文件夹：`git clone https://github.com/SakuraRainn/panim /path/to/panim-public`。
-8. 用签名的源代码归档制作公开提交和标签。保持 Telegram 参数在环境变量中，这样脚本可以确认 `api_hash` 不在提交中：
+9. 用签名的源代码归档制作公开提交和标签：
 
    ```
    nix run .#publish -- --from /path/to/release --clone /path/to/panim-public --version <version> \
@@ -182,8 +262,18 @@ PANIM 处于第 1 步（`docs/DESIGN.md` §3）。第 1 步中每个人只有一
    - 脚本用归档中的文件替换克隆中的所有文件，并删除新版本中没有的文件。
    - 它确认文件树与归档完全相同、`export-ignore` 排除的文件不存在、`api_hash` 不存在。如果某项检查失败，它会再次删除提交和标签。
    - 它不推送。
-9. 检查提交。然后运行脚本显示的推送命令。
-10. 在公开仓库中，在标签 `v<version>` 上创建发布。发布输出文件夹中的所有文件：AppImage、`panim-<version>-source.tar.gz`、`SHA256SUMS` 和 `SHA256SUMS.minisig`。
-11. 推送开发仓库的标签和分支。
+10. 检查提交。然后运行脚本显示的推送命令。
+11. 在公开仓库中，在标签 `v<version>` 上创建发布。发布输出文件夹中的所有文件：`.deb`、`.rpm`、AppImage、`.dmg`、`panim-<version>-source.tar.gz`、`SHA256SUMS` 和 `SHA256SUMS.minisig`。
+12. 推送开发仓库的分支。第 5 步已经推送了标签。
+
+候选版本（release candidate）用于在 Mac 上的手工检查（`docs/ROADMAP.md` §10）。在提交上创建标签 `v<version>-rc.<n>`。只进行第 5 步，并在 `git push` 命令中用 `v<version>-rc.<n>` 代替 `v<version>`。这样 `.dmg` 就包含 PANIM 的 Telegram 应用参数。
+
+要把候选版本作为预发布版本（pre-release）发布，在第 5 步之后进行以下步骤：
+
+1. 给 `.dmg` 使用完整版本号：`mv target/macos/PANIM_<version>_aarch64.dmg target/macos/PANIM_<version>-rc.<n>_aarch64.dmg`。
+2. 用 `--version <version>-rc.<n>` 和 `--ref v<version>-rc.<n>` 进行第 6 步。只把 `.dmg` 作为 `--artifact`。
+3. 用 `--version <version>-rc.<n>` 进行第 7 到第 10 步。脚本只推送标签。公开仓库的 `main` 分支不变。
+4. 在公开仓库中，在标签 `v<version>-rc.<n>` 上创建发布，并标记为预发布版本。发布输出目录中的所有文件。
+5. 在发布说明中写明：还没有人在真实的 Mac 上进行手工检查。告诉用户只使用测试账号，并保留备份。
 
 `.gitattributes` 标记只用于开发的文件：`git archive` 会排除它们。因此，源代码归档和公开仓库中没有这些文件。不要这样标记 `README.md`、`CONTRIBUTING.md`、`SECURITY.md`、它们的中文文件或 `.github/`。

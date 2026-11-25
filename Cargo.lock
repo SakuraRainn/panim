@@ -2173,6 +2173,7 @@ version = "0.40.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b06e69070b7e12262b0cd90832f0a7396f142a2b330181255562decf9f0c6215"
 dependencies = [
+ "cc",
  "pkg-config",
  "vcpkg",
 ]
@@ -2608,15 +2609,19 @@ dependencies = [
 
 [[package]]
 name = "panim"
-version = "0.1.3"
+version = "0.2.0"
 dependencies = [
+ "block2",
  "gtk",
+ "objc2",
+ "objc2-app-kit",
  "panim-core",
  "panim-github",
  "panim-telegram",
  "panim-vault",
  "serde",
  "serde_json",
+ "sha2 0.11.1",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
@@ -2626,7 +2631,7 @@ dependencies = [
 
 [[package]]
 name = "panim-core"
-version = "0.1.3"
+version = "0.2.0"
 dependencies = [
  "bip39",
  "getrandom 0.4.3",
@@ -2640,7 +2645,7 @@ dependencies = [
 
 [[package]]
 name = "panim-github"
-version = "0.1.3"
+version = "0.2.0"
 dependencies = [
  "panim-core",
  "serde",
@@ -2651,7 +2656,7 @@ dependencies = [
 
 [[package]]
 name = "panim-telegram"
-version = "0.1.3"
+version = "0.2.0"
 dependencies = [
  "getrandom 0.4.3",
  "panim-core",
@@ -2662,7 +2667,7 @@ dependencies = [
 
 [[package]]
 name = "panim-vault"
-version = "0.1.3"
+version = "0.2.0"
 dependencies = [
  "aes",
  "argon2",

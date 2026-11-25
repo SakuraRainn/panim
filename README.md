@@ -2,7 +2,7 @@
 
 English | [简体中文](README.zh-CN.md)
 
-PANIM (פנים, "face", a word that is always plural in Hebrew) is a desktop persona manager for Linux. You connect your accounts to it. Then you read and answer them in one location, on your computer. There is no PANIM server.
+PANIM (פנים, "face", a word that is always plural in Hebrew) is a desktop persona manager for Linux and macOS. You connect your accounts to it. Then you read and answer them in one location, on your computer. There is no PANIM server.
 
 Later, PANIM will let one person split into several personas. Each persona will keep its accounts, its browser profile and its network route apart. Today, PANIM has one persona, and the app does not show it.
 
@@ -38,62 +38,58 @@ Do not trust a key from a different location. A key in a message, in an issue or
 ## Check a download
 
 1. From the release page, download the files that you need, `SHA256SUMS` and `SHA256SUMS.minisig` into one folder.
-2. Install minisign, for example with `sudo apt install minisign` or `nix shell nixpkgs#minisign`.
+2. Install minisign, for example with `sudo apt install minisign`, `nix shell nixpkgs#minisign` or, on macOS, `brew install minisign`.
 3. Examine the signature: `minisign -Vm SHA256SUMS -P RWQLFh9VSlxce6HvAgce8fOpN5K41RRR5zeh8KsFVMPIDtdmRGD1MkXa`. The result must be "Signature and comment signature verified". The trusted comment gives the version and the commit.
-4. Examine the files: `sha256sum -c SHA256SUMS --ignore-missing`. Each file that you downloaded must be "OK".
+4. Examine the files: `sha256sum -c SHA256SUMS --ignore-missing`. On macOS, use `shasum -a 256 -c SHA256SUMS --ignore-missing`. Each file that you downloaded must be "OK".
 5. If a step fails, do not start the file. Download it again from the official repository.
 
 ## Install
 
-PANIM runs on Linux, on x86_64. Select one of these two methods: the AppImage or Nix.
+PANIM runs on Linux, on x86_64, and on macOS 14 or later, on Apple silicon.
+
+- **Linux.** The packages need glibc 2.39 or later, for example Ubuntu 24.04, Debian 13 or Fedora 40 and later. Select one of these methods: the `.deb`, the `.rpm`, the AppImage or Nix.
+- **macOS.** Use the `.dmg`. A Mac with an Intel processor cannot start it.
+
+The `.deb`, the `.rpm`, the AppImage and the `.dmg` have the Telegram app values of PANIM (the section "Telegram").
+
+### The .deb (Ubuntu and Debian)
+
+1. Download `PANIM_<version>_amd64.deb` and check it (the section "Check a download").
+2. Run `sudo apt install ./PANIM_<version>_amd64.deb`. Apt also installs the libraries that PANIM needs.
+3. Start PANIM from the menu of the applications, or run `panim`.
+
+### The .rpm (Fedora)
+
+1. Download `PANIM-<version>-1.x86_64.rpm` and check it (the section "Check a download").
+2. Run `sudo dnf install ./PANIM-<version>-1.x86_64.rpm`. Dnf also installs the libraries that PANIM needs.
+3. Start PANIM from the menu of the applications, or run `panim`.
 
 ### The AppImage
 
-The AppImage is one file. It has all the libraries that PANIM needs, and the Telegram app values of PANIM (the section "Telegram").
+The AppImage is one file. It has WebKitGTK, GTK and the other libraries of PANIM. It uses the graphics libraries and the fonts of your system.
 
-1. Download `PANIM-<version>-x86_64.AppImage` and check it (the section "Check a download").
+1. Download `PANIM_<version>_amd64.AppImage` and check it (the section "Check a download").
 2. Put it in a folder that only you can write to, for example `~/Applications`.
-3. Run `chmod +x PANIM-<version>-x86_64.AppImage`.
+3. Run `chmod +x PANIM_<version>_amd64.AppImage`.
 4. Start the file.
 
-If the AppImage does not start:
+If the AppImage does not start correctly:
 
-- **"cannot unshare"**: your system blocks unprivileged user namespaces. Refer to the next section.
-- **"Cannot mount AppImage"**: install FUSE 3 (on Ubuntu, Debian and Fedora, the package `fuse3`). Or start the AppImage with the option `--appimage-extract-and-run`.
+- **"No suitable fusermount binary found"**: install FUSE 3 (on Ubuntu, Debian and Fedora, the package `fuse3`). Without FUSE 3, the AppImage unpacks itself into a temporary folder each time, and it starts more slowly.
 - **The window stays empty**: start the AppImage with `WEBKIT_DISABLE_DMABUF_RENDERER=1`. If that does not help, also set `LIBGL_ALWAYS_SOFTWARE=1`.
 
-### Ubuntu 24.04 and later
+The AppImage of release 0.1.x needed a user namespace and, on Ubuntu 24.04, an AppArmor profile. The AppImage of release 0.2.0 does not need them. To remove the old profile, run `sudo apparmor_parser -R /etc/apparmor.d/panim`, then `sudo rm /etc/apparmor.d/panim`.
 
-The AppImage must make a user namespace. Ubuntu 24.04 and later block unprivileged user namespaces with AppArmor (`kernel.apparmor_restrict_unprivileged_userns = 1`). Then the AppImage stops with "cannot unshare: Operation not permitted", and it shows these steps with its own path.
+### The .dmg (macOS)
 
-The safe fix is an AppArmor profile that lets only the AppImage of PANIM make user namespaces. Ubuntu uses this method for the apps that need them. The other programs on your computer keep the protection.
+1. Download `PANIM_<version>_aarch64.dmg` and check it (the section "Check a download").
+2. Open the `.dmg`, and move PANIM to the folder Applications.
+3. Start PANIM. The first time, macOS blocks it, because PANIM has no signature of Apple. Close the message. Do not move PANIM to the Trash.
+4. Open System Settings > Privacy & Security. Below "Security", click "Open Anyway" for PANIM, and enter your password.
 
-1. Find the full path of the AppImage, for example `/home/you/Applications/PANIM-0.1.1-x86_64.AppImage`.
-2. Write the profile. Put your path between the quotes:
+macOS asks one time only. On macOS 15 and later, a Control-click on the app does not open it this way. Use System Settings.
 
-   ```
-   sudo tee /etc/apparmor.d/panim <<'EOF'
-   abi <abi/4.0>,
-   include <tunables/global>
-   profile panim "/home/you/Applications/PANIM-0.1.1-x86_64.AppImage" flags=(unconfined) {
-     userns,
-     include if exists <local/panim>
-   }
-   EOF
-   ```
-
-3. Load the profile: `sudo apparmor_parser -r /etc/apparmor.d/panim`.
-4. Start the AppImage again.
-
-Know these points:
-
-- The profile is for one path. If you move or rename the AppImage, change the path in the profile, and do step 3 again.
-- For the next releases, you can write the pattern `PANIM-*-x86_64.AppImage` in the path. Use a pattern only in a folder that only you can write to.
-- The profile does not limit PANIM in a different way. It only lets PANIM make user namespaces.
-- To remove the profile, run `sudo apparmor_parser -R /etc/apparmor.d/panim`, then `sudo rm /etc/apparmor.d/panim`.
-- The option `--appimage-extract-and-run` does not help. It starts the same first step, and this step also needs a user namespace.
-- Do not turn off the protection for all programs (`sysctl kernel.apparmor_restrict_unprivileged_userns=0`). The profile is sufficient.
-- You can also install PANIM with Nix (the next section). The Nix package does not need a user namespace.
+PANIM keeps its data in `~/Library/Application Support/panim`. While PANIM runs, it keeps the open browser profiles on a RAM disk. Finder does not show this disk. Quit PANIM with Cmd+Q: PANIM then seals the data and removes the RAM disk.
 
 ### With Nix
 
@@ -118,13 +114,13 @@ Your passcode, the 12 recovery words and the key file each open PANIM:
 - After five wrong passcodes, only the 12 words or the key file open PANIM.
 - PANIM locks after 15 minutes with no input. You can change this time in the settings.
 
-PANIM keeps all its data sealed in `~/.local/share/panim`. Without the passcode, the 12 words or the key file, nobody can open it. Also the maintainer of PANIM cannot open it.
+PANIM keeps all its data sealed in `~/.local/share/panim` (on macOS, in `~/Library/Application Support/panim`). Without the passcode, the 12 words or the key file, nobody can open it. Also the maintainer of PANIM cannot open it.
 
 ## Telegram
 
 Telegram knows each app by its app values: an `api_id` and an `api_hash`.
 
-- **PANIM's values.** The AppImage has them. All the people who use PANIM share them, so they do not link your personas. They are the default.
+- **PANIM's values.** The `.deb`, the `.rpm` and the AppImage have them. All the people who use PANIM share them, so they do not link your personas. They are the default.
 - **Your own values.** Get them at my.telegram.org → API development tools. In PANIM, open Settings → Telegram app values, select "My own app values" and enter them. PANIM keeps them sealed and does not show the `api_hash` again.
 - **Warning:** an `api_id` belongs to one Telegram account. If the logins of several personas use your own `api_id`, Telegram can see that they have the same owner.
 - A change of this setting is only for new logins. Each account keeps the values of its login.
@@ -144,12 +140,12 @@ The Telegram library of PANIM has a change, so that Telegram makes no connection
 
 ## Known limits
 
-- PANIM runs only on Linux. A version for macOS comes in a later release.
+- The `.dmg` is only for Apple silicon, and it has no signature of Apple (the section "The .dmg (macOS)").
 - All the browser views have the same fingerprint as your computer. The profile and the route of PANIM stop only easy links between personas.
 - If your computer has swap, the system can write the open browser profile to the swap. Use encrypted swap or no swap.
 - The unread count of a browser view exists only while its window is open.
 - The Telegram chat panel shows text only. On a network that blocks the addresses of Telegram, use a proxy.
-- The AppImage has the graphics drivers of Mesa. Nobody tested it with the proprietary NVIDIA driver.
+- The packages use the graphics drivers of your system. Nobody tested PANIM with the proprietary NVIDIA driver.
 
 `CHANGELOG.md` has the full list for each release.
 

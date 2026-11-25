@@ -15,11 +15,16 @@
 #    are not there, and the Telegram `api_hash` of `PANIM_TELEGRAM_API_HASH` is not there. If a check fails, it
 #    removes the commit and the tag again.
 #
+# The version has the form X.Y.Z for a release, or X.Y.Z-rc.N for a release candidate (for example 0.2.0-rc.1).
+# For a release candidate, the script does the same steps, but the push command pushes only the tag. Thus, the branch
+# `main` of the public repository stays at the last release. The local `main` of the clone gets the commit of the
+# release candidate, so do not use this clone for the next release. Make a new clone.
+#
 # It never pushes. It shows the push command. It accepts only an email of the form `<name>@users.noreply.github.com`,
 # so that the email of the development repository does not become public. `--allow-any-email` stops this check.
 
 usage() {
-  echo "usage: panim-publish --from FOLDER --clone PUBLIC_CLONE --version X.Y.Z --name NAME --email EMAIL [--pubkey PUBLIC_KEY] [--allow-any-email]" >&2
+  echo "usage: panim-publish --from FOLDER --clone PUBLIC_CLONE --version X.Y.Z[-rc.N] --name NAME --email EMAIL [--pubkey PUBLIC_KEY] [--allow-any-email]" >&2
   exit 2
 }
 
@@ -49,8 +54,12 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$from" ] && [ -n "$clone" ] && [ -n "$version" ] && [ -n "$name" ] && [ -n "$email" ] || usage
 
-if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  fail "the version must have the form X.Y.Z"
+if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]]; then
+  fail "the version must have the form X.Y.Z or X.Y.Z-rc.N"
+fi
+candidate=0
+if [[ "$version" == *-rc.* ]]; then
+  candidate=1
 fi
 if [[ "$name" == *$'\n'* ]] || [[ "$email" == *[[:space:]\<\>]* ]]; then
   fail "the name or the email has a character that is not permitted"
@@ -92,9 +101,13 @@ if [ -n "$pubkey" ]; then
   fi
   verified="$(minisign -V "${key_args[@]}" -m "$from/SHA256SUMS")" || fail "the signature of SHA256SUMS is not correct"
   printf '%s\n' "$verified"
-  # release.sh writes the trusted comment "PANIM <version>, commit <commit>".
-  grep -q "^Trusted comment: PANIM $version, commit [0-9a-f]\{40\}$" <<< "$verified" ||
+  # release.sh writes the trusted comment "PANIM <version>, commit <commit>". The script compares the version as
+  # fixed text, because "." is a special character in a regex.
+  trusted="$(sed -n 's/^Trusted comment: //p' <<< "$verified")"
+  signed_commit="${trusted#"PANIM $version, commit "}"
+  if [ "$signed_commit" = "$trusted" ] || ! [[ "$signed_commit" =~ ^[0-9a-f]{40}$ ]]; then
     fail "the trusted comment of the signature is not for PANIM $version"
+  fi
 else
   echo "panim-publish: no --pubkey, so the signature of SHA256SUMS was not examined" >&2
 fi
@@ -211,6 +224,16 @@ echo "Author and committer: $name <$email>"
 g log -1 --format='%B' "$commit"
 g diff --shortstat "${old_head:-$(g hash-object -t tree /dev/null)}" "$commit"
 echo
-echo "Nothing was pushed. Examine the commit, then push it:"
-echo
-echo "  git -C '$clone' push origin main 'refs/tags/$tag'"
+if [ "$candidate" -eq 1 ]; then
+  echo "Nothing was pushed. $version is a release candidate. Examine the commit, then push only the tag:"
+  echo
+  echo "  git -C '$clone' push origin 'refs/tags/$tag'"
+  echo
+  echo "The branch main of the public repository does not change. It stays at the last release."
+  echo "The local main of this clone now has the commit of the release candidate."
+  echo "Do not use this clone for the next release. Make a new clone."
+else
+  echo "Nothing was pushed. Examine the commit, then push it:"
+  echo
+  echo "  git -C '$clone' push origin main 'refs/tags/$tag'"
+fi
